@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CICS Artifact Event v1",
+  "type": "object",
+  "properties": {
+    "schema_id": {"const": "cics.artifact_event.v1"},
+    "schema_version": {"const": 1},
+    "event_id": {"type": "string", "minLength": 1},
+    "artifact_id": {"type": "string", "pattern": "^art_[a-f0-9]{32}$"},
+    "event_type": {"enum": ["STAGED", "APPROVED", "REJECTED", "PROMOTED", "CONTENT_REVISED", "DELETED_FROM_STAGING", "DELETED_FROM_COMMITTED", "PURGED"]},
+    "occurred_at_utc": {"type": "string", "format": "date-time"},
+    "actor": {"type": "string", "minLength": 1},
+    "from_status": {"type": ["string", "null"], "enum": ["STAGED", "APPROVED", "REJECTED", "COMMITTED", null]},
+    "to_status": {"type": ["string", "null"], "enum": ["STAGED", "APPROVED", "REJECTED", "COMMITTED", null]},
+    "content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "reason": {"type": "string"},
+    "revision": {"type": "integer", "minimum": 1},
+    "previous_content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "operation_metadata": {"type": "object", "additionalProperties": true}
+  },
+  "required": ["schema_id", "schema_version", "event_id", "artifact_id", "event_type", "occurred_at_utc", "actor", "from_status", "to_status", "content_hash"],
+  "additionalProperties": false
+}
