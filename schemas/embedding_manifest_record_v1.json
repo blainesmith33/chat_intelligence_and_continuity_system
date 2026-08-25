@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CICS Embedding Manifest Record v1",
+  "type": "object",
+  "properties": {
+    "schema_id": {"const": "cics.embedding_manifest_record.v1"},
+    "schema_version": {"const": 1},
+    "embedding_build_id": {"type": "string", "pattern": "^emb_[a-f0-9]{64}$"},
+    "row_index": {"type": "integer", "minimum": 0},
+    "chunk_id": {"type": "string", "pattern": "^chk_[a-f0-9]{64}$"},
+    "vector_dimension": {"type": "integer", "minimum": 1},
+    "vector_dtype": {"enum": ["float32", "float64"]},
+    "model_id": {"type": "string", "minLength": 1},
+    "embedding_policy_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "model_revision": {"type": ["string", "null"]},
+    "vector_content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "metadata": {"type": "object", "additionalProperties": true}
+  },
+  "required": ["schema_id", "schema_version", "embedding_build_id", "row_index", "chunk_id", "vector_dimension", "vector_dtype", "model_id", "embedding_policy_hash"],
+  "additionalProperties": false
+}
