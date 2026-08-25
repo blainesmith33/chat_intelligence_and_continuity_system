@@ -1,0 +1,273 @@
+{
+  "schema_id": "control_layer_config_v1",
+  "metadata_schema_id": "metadata_schema_v1",
+  "corpus_id": "coding_v2",
+  "hash_algorithms": {
+    "doc_id": "blake3",
+    "file_hash": "blake3",
+    "manifest_hash": "blake3",
+    "config_hash": "blake3",
+    "snapshot_id": "blake3"
+  },
+  "sections": [
+    "my_projects",
+    "addon_examples",
+    "wow_ui_source",
+    "wow_api",
+    "lua_docs",
+    "python_docs",
+    "yaml_docs",
+    "git_docs",
+    "github_docs",
+    "docker_docs",
+    "kubernetes_docs",
+    "terraform_docs",
+    "cloudflare_docs",
+    "cloud_providers",
+    "linux_ops",
+    "steamos_ops",
+    "networking_ops",
+    "hardware_manuals",
+    "vector_db_docs",
+    "database_docs",
+    "ci_cd_docs",
+    "build_systems",
+    "package_managers",
+    "shell_docs",
+    "csharp_docs",
+    "cpp_docs",
+    "coding_principles",
+    "notes"
+  ],
+  "authority_levels": [
+    "official",
+    "community",
+    "n/a"
+  ],
+  "authority_split_sections": [
+    "git_docs",
+    "github_docs",
+    "docker_docs",
+    "kubernetes_docs",
+    "terraform_docs",
+    "cloudflare_docs",
+    "cloud_providers",
+    "linux_ops",
+    "steamos_ops",
+    "networking_ops",
+    "vector_db_docs",
+    "database_docs",
+    "ci_cd_docs",
+    "build_systems",
+    "package_managers",
+    "shell_docs",
+    "csharp_docs",
+    "cpp_docs"
+  ],
+  "non_split_sections": [
+    "my_projects",
+    "addon_examples",
+    "wow_ui_source",
+    "wow_api",
+    "lua_docs",
+    "python_docs",
+    "yaml_docs",
+    "hardware_manuals",
+    "coding_principles",
+    "notes"
+  ],
+  "cloud_provider_children": [
+    "aws",
+    "azure",
+    "gcp"
+  ],
+  "languages": [
+    "lua",
+    "python",
+    "bash",
+    "yaml",
+    "json",
+    "terraform",
+    "xml",
+    "text",
+    "dockerfile",
+    "csharp",
+    "cpp",
+    "c",
+    "toml",
+    "ini",
+    "conf",
+    "powershell",
+    "rust",
+    "go",
+    "javascript",
+    "typescript",
+    "javascriptreact",
+    "typescriptreact",
+    "java",
+    "kotlin",
+    "swift",
+    "php",
+    "sql",
+    "unknown"
+  ],
+  "extension_language_map": {
+    ".lua": "lua",
+    ".py": "python",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".json": "json",
+    ".tf": "terraform",
+    ".tfvars": "terraform",
+    ".xml": "xml",
+    ".md": "text",
+    ".txt": "text",
+    ".rst": "text",
+    ".dockerfile": "dockerfile",
+    "Dockerfile": "dockerfile",
+    ".cs": "csharp",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
+    ".c": "c",
+    ".h": "c",
+    ".toml": "toml",
+    ".ini": "ini",
+    ".conf": "conf",
+    ".ps1": "powershell",
+    ".rs": "rust",
+    ".go": "go",
+    ".js": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".jsx": "javascriptreact",
+    ".tsx": "typescriptreact",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".swift": "swift",
+    ".php": "php",
+    ".sql": "sql"
+  },
+  "unknown_extension_policy": "hard_fail",
+  "no_extension_policy": {
+    "allowed_literals": [
+      "Dockerfile"
+    ],
+    "default": "hard_fail"
+  },
+  "path_normalization": {
+    "absolute_path_required": true,
+    "resolve_symlinks": true,
+    "normalize_separators_to_forward_slash": true,
+    "preserve_case": true,
+    "remove_trailing_slash": true,
+    "allow_relative_paths": false
+  },
+  "doc_id_rule": {
+    "type": "path_based",
+    "input": "normalized_absolute_path",
+    "stability_on_move": "changes"
+  },
+  "manifest": {
+    "filename": "sources_manifest.jsonl",
+    "format": "jsonl",
+    "entry_granularity": "one_per_file",
+    "canonical_field_order": [
+      "schema_id",
+      "section",
+      "authority_level",
+      "language",
+      "project",
+      "source_path",
+      "filename",
+      "doc_id",
+      "file_hash",
+      "file_size_bytes",
+      "corpus"
+    ],
+    "ordering_rule": "sorted_by_normalized_absolute_path",
+    "canonical_serialization": {
+      "encoding": "utf-8",
+      "bom": false,
+      "newline": "\\n",
+      "compact_json": true,
+      "fixed_key_order": true,
+      "nulls_allowed": false,
+      "floats_allowed": false
+    },
+    "manifest_hash_rule": "blake3(bytes_of_sources_manifest.jsonl)"
+  },
+  "validation": {
+    "unknown_metadata_policy": "hard_fail",
+    "overrides_allowed": false,
+    "warnings_allowed": false,
+    "collect_all_errors_then_fail": true,
+    "exit_codes": {
+      "success": 0,
+      "failure": 1
+    },
+    "hard_fail_conditions": [
+      "missing_field",
+      "invalid_enum",
+      "duplicate_doc_id",
+      "invalid_path",
+      "unknown_language",
+      "structure_violation"
+    ]
+  },
+  "audit": {
+    "required_before_chunking": true,
+    "formats": [
+      "json",
+      "text"
+    ],
+    "required_metrics": [
+      "total_files",
+      "valid_files",
+      "invalid_files",
+      "per_section_counts",
+      "authority_distribution",
+      "language_distribution"
+    ]
+  },
+  "dry_run": {
+    "required": true,
+    "subset_size_min": 10,
+    "subset_size_max": 50,
+    "mode": "same_pipeline_subset_input",
+    "required_checks": [
+      "metadata_completeness",
+      "doc_id_stability",
+      "chunk_integrity",
+      "count_match"
+    ],
+    "result_artifact_required": true
+  },
+  "snapshot": {
+    "snapshot_type": "control_layer_snapshot_v1",
+    "status_lifecycle": [
+      "candidate",
+      "active",
+      "archived"
+    ],
+    "snapshot_id_rule": "blake3(manifest_hash + \":\" + config_hash)",
+    "config_hash_rule": "blake3(bytes_of_canonical_control_layer_config.json)",
+    "minimum_metadata_fields": [
+      "snapshot_id",
+      "snapshot_type",
+      "created_at_utc",
+      "manifest_hash",
+      "config_hash",
+      "status",
+      "payload_paths"
+    ]
+  }
+}

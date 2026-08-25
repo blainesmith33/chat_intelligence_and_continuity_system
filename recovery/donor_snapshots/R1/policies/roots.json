@@ -1,0 +1,6 @@
+{
+  "staging_root": "/home/deck/cics/staging",
+  "committed_root": "/home/deck/cics/committed",
+  "artifacts_root": "/home/deck/cics/artifacts",
+  "imports_root": "/home/deck/cics/imports/raw"
+}

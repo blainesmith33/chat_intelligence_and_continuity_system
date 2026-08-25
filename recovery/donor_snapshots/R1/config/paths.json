@@ -1,0 +1,6 @@
+{
+  "clean_corpus": "D:\\rag_sources\\_clean_ingest",
+  "chunks": "D:\\rag_project\\chunks",
+  "metadata": "D:\\rag_project\\metadata",
+  "embeddings": "D:\\rag_project\\embeddings"
+}

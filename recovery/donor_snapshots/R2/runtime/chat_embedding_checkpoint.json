@@ -1,0 +1,7 @@
+{
+  "chunk_count": 13600,
+  "model_name": "nomic-ai/nomic-embed-text-v1.5",
+  "next_index": 13600,
+  "output_file": "/home/kimberly/cics/corpora/chats/embeddings/chat_embeddings.npy",
+  "vector_dim": 768
+}

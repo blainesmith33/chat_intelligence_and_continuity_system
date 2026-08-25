@@ -1,0 +1,16 @@
+{
+  "total_files": 2,
+  "valid_files": 2,
+  "invalid_files": 0,
+  "per_section_counts": {
+    "python_docs": 2
+  },
+  "authority_distribution": {
+    "n/a": 2
+  },
+  "language_distribution": {
+    "python": 2
+  },
+  "status": "pass",
+  "invalid_entries": []
+}

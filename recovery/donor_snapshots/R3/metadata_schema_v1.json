@@ -1,0 +1,126 @@
+{
+  "schema_id": "metadata_schema_v1",
+  "type": "object",
+  "required": [
+    "schema_id",
+    "section",
+    "authority_level",
+    "language",
+    "project",
+    "source_path",
+    "filename",
+    "doc_id",
+    "file_hash",
+    "file_size_bytes",
+    "corpus"
+  ],
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "const": "metadata_schema_v1"
+    },
+    "section": {
+      "type": "string",
+      "enum": [
+        "my_projects",
+        "addon_examples",
+        "wow_ui_source",
+        "wow_api",
+        "lua_docs",
+        "python_docs",
+        "yaml_docs",
+        "git_docs",
+        "github_docs",
+        "docker_docs",
+        "kubernetes_docs",
+        "terraform_docs",
+        "cloudflare_docs",
+        "cloud_providers",
+        "linux_ops",
+        "steamos_ops",
+        "networking_ops",
+        "hardware_manuals",
+        "vector_db_docs",
+        "database_docs",
+        "ci_cd_docs",
+        "build_systems",
+        "package_managers",
+        "shell_docs",
+        "csharp_docs",
+        "cpp_docs",
+        "coding_principles",
+        "notes"
+      ]
+    },
+    "authority_level": {
+      "type": "string",
+      "enum": [
+        "official",
+        "community",
+        "n/a"
+      ]
+    },
+    "language": {
+      "type": "string",
+      "enum": [
+        "lua",
+        "python",
+        "bash",
+        "yaml",
+        "json",
+        "terraform",
+        "xml",
+        "text",
+        "dockerfile",
+        "csharp",
+        "cpp",
+        "c",
+        "toml",
+        "ini",
+        "conf",
+        "powershell",
+        "rust",
+        "go",
+        "javascript",
+        "typescript",
+        "javascriptreact",
+        "typescriptreact",
+        "java",
+        "kotlin",
+        "swift",
+        "php",
+        "sql",
+        "unknown"
+      ]
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "filename": {
+      "type": "string",
+      "minLength": 1
+    },
+    "doc_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]+$"
+    },
+    "file_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]+$"
+    },
+    "file_size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "corpus": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,7 @@
+{
+  "chunk_count": 294376,
+  "model_name": "nomic-ai/nomic-embed-text-v1.5",
+  "next_index": 294376,
+  "output_file": "/home/kimberly/cics/corpora/coding/embeddings/coding_embeddings.npy",
+  "vector_dim": 768
+}
