@@ -1,0 +1,24 @@
+# Python generated files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+
+# Test/tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime configuration
+.env
+
+# Generated CICS runtime data must never enter source Git
+runtime/
+imports/
+chunks/
+embeddings/
+vector_store/
+retrieval/
