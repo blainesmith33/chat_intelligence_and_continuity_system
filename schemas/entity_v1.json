@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CICS Entity v1",
+  "type": "object",
+  "properties": {
+    "schema_id": {"const": "cics.entity.v1"},
+    "schema_version": {"const": 1},
+    "entity_id": {"type": "string", "pattern": "^ent_[a-z0-9][a-z0-9._-]*$"},
+    "entity_type": {"enum": ["formal_project", "candidate_idea", "subsystem", "corpus_section", "non_project_corpus", "archive_bucket", "infrastructure_component"]},
+    "canonical_name": {"type": "string", "minLength": 1},
+    "authority_level": {"enum": ["authoritative", "supporting", "inferred"]},
+    "status": {"enum": ["active", "archived", "candidate", "subsystem", "non_project", "unknown"]},
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref_type", "ref", "role"],
+        "properties": {
+          "ref_type": {"enum": ["source_id", "document_id", "chunk_id", "repository", "folder_policy", "project_index", "charter", "manual_decision"]},
+          "ref": {"type": "string", "minLength": 1},
+          "role": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "aliases": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "parent_entity_id": {"type": ["string", "null"], "pattern": "^ent_[a-z0-9][a-z0-9._-]*$"},
+    "related_entity_ids": {"type": "array", "items": {"type": "string", "pattern": "^ent_[a-z0-9][a-z0-9._-]*$"}, "uniqueItems": true},
+    "notes": {"type": "string"},
+    "policy_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+  },
+  "required": ["schema_id", "schema_version", "entity_id", "entity_type", "canonical_name", "authority_level", "status", "evidence_refs"],
+  "additionalProperties": false
+}
