@@ -1,0 +1,38 @@
+# Safe example only. Real deployment configuration may live outside Git.
+# Relative paths resolve against the directory containing the selected TOML file.
+
+[paths]
+data_root = "../../data"
+runtime_root = "../../runtime"
+
+[artifacts]
+staging_root = "../../runtime/artifacts/staging"
+committed_root = "../../runtime/artifacts/committed"
+
+[corpus]
+manifests_root = "../../runtime/manifests"
+
+[chunking]
+chunker_id = "cics.chat_chunker"
+chunker_version = "1"
+
+[embeddings]
+model_id = "nomic-ai/nomic-embed-text-v1.5"
+vector_dimension = 768
+vector_dtype = "float32"
+device = "cpu"
+normalize = false
+
+[vector_store]
+provider = "qdrant"
+host = "127.0.0.1"
+port = 6333
+collection_logical_name = "chat_rag"
+distance_metric = "cosine"
+
+[registry]
+policy_path = "../../config/registry_policy.json"
+
+[runtime]
+checkpoint_root = "../../runtime/checkpoints"
+log_root = "../../runtime/logs"
