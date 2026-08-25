@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CICS Source Record v1",
+  "type": "object",
+  "properties": {
+    "schema_id": {"const": "cics.source_record.v1"},
+    "schema_version": {"const": 1},
+    "source_id": {"type": "string", "pattern": "^src_[a-f0-9]{64}$"},
+    "source_format": {"type": "string", "minLength": 1},
+    "content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "byte_length": {"type": "integer", "minimum": 0},
+    "media_type": {"type": "string", "minLength": 1},
+    "observed_name": {"type": "string", "minLength": 1},
+    "created_at_source": {"type": "string", "format": "date-time"},
+    "registration_notes": {"type": "string"}
+  },
+  "required": ["schema_id", "schema_version", "source_id", "source_format", "content_hash", "byte_length"],
+  "additionalProperties": false
+}
