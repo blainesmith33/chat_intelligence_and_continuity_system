@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CICS Message Record v1",
+  "type": "object",
+  "properties": {
+    "schema_id": {"const": "cics.message_record.v1"},
+    "schema_version": {"const": 1},
+    "message_id": {"type": "string", "pattern": "^msg_[a-f0-9]{64}$"},
+    "document_id": {"type": "string", "pattern": "^doc_[a-f0-9]{64}$"},
+    "source_order": {"type": "integer", "minimum": 0},
+    "role": {"type": "string", "minLength": 1},
+    "content": {"type": "string"},
+    "content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_locator": {
+      "type": "object",
+      "required": ["locator_type", "value"],
+      "properties": {
+        "locator_type": {"type": "string", "minLength": 1},
+        "value": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "parser_id": {"type": "string", "minLength": 1},
+    "parser_version": {"type": "string", "minLength": 1},
+    "native_message_id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "author_name": {"type": "string"},
+    "content_type": {"type": "string", "minLength": 1},
+    "parent_message_id": {"type": ["string", "null"], "pattern": "^msg_[a-f0-9]{64}$"},
+    "branch_id": {"type": ["string", "null"]},
+    "metadata": {"type": "object", "additionalProperties": true}
+  },
+  "required": ["schema_id", "schema_version", "message_id", "document_id", "source_order", "role", "content", "content_hash", "source_locator", "parser_id", "parser_version"],
+  "additionalProperties": false
+}
