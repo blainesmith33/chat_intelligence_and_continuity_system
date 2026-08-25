@@ -74,15 +74,91 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temp_path, path)
 
 
-def _page(payload: dict[str, Any]) -> dict[str, Any]:
+def _active_branch_raw_messages(
+    payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    Return the active ChatGPT branch in leaf-to-root order.
+
+    Supported captured export shapes:
+
+    1. Paginated capture:
+       __paginatedConversationPage.messagesLeafToRoot
+
+    2. Mapping capture:
+       mapping + current_node
+
+       In this form the active branch is reconstructed by
+       following current_node -> parent -> parent until root.
+
+    The returned orientation is always leaf-to-root so the
+    normalization layer can apply one chronological reversal.
+    """
+
     page = payload.get("__paginatedConversationPage")
 
-    if not isinstance(page, dict):
+    if isinstance(page, dict):
+        messages = page.get("messagesLeafToRoot")
+
+        if isinstance(messages, list):
+            return [
+                message
+                for message in messages
+                if isinstance(message, dict)
+            ]
+
+    mapping = _mapping(payload)
+    current_node = payload.get("current_node")
+
+    if not isinstance(current_node, str) or not current_node:
         raise ChatGPTRawImportError(
-            "Missing __paginatedConversationPage object"
+            "Raw export contains neither "
+            "messagesLeafToRoot nor a valid current_node"
         )
 
-    return page
+    branch: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    node_id: str | None = current_node
+
+    while node_id:
+        if node_id in seen:
+            raise ChatGPTRawImportError(
+                f"Cycle detected in conversation mapping at: {node_id}"
+            )
+
+        seen.add(node_id)
+
+        node = mapping.get(node_id)
+
+        if not isinstance(node, dict):
+            raise ChatGPTRawImportError(
+                f"Active branch node missing from mapping: {node_id}"
+            )
+
+        message = node.get("message")
+
+        if isinstance(message, dict):
+            raw_message = dict(message)
+
+            if not isinstance(raw_message.get("id"), str):
+                raw_message["id"] = node_id
+
+            branch.append(raw_message)
+
+        parent = node.get("parent")
+
+        if isinstance(parent, str) and parent:
+            node_id = parent
+        else:
+            node_id = None
+
+    if not branch:
+        raise ChatGPTRawImportError(
+            "Active mapping branch contained no messages"
+        )
+
+    return branch
 
 
 def _mapping(payload: dict[str, Any]) -> dict[str, Any]:
@@ -228,14 +304,9 @@ def extract_active_messages(
     into the Phase-1 retrieval conversation.
     """
 
-    page = _page(payload)
-
-    raw_messages = page.get("messagesLeafToRoot")
-
-    if not isinstance(raw_messages, list):
-        raise ChatGPTRawImportError(
-            "messagesLeafToRoot must be an array"
-        )
+    raw_messages = _active_branch_raw_messages(
+        payload
+    )
 
     parent_lookup = _parent_lookup(payload)
 
