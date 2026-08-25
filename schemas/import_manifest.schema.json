@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cics.local/schemas/import_manifest.schema.json",
+  "title": "CICS Import Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "import_id",
+    "imported_at",
+    "source_id",
+    "source_format",
+    "source_file",
+    "content_hash",
+    "parser_version",
+    "status"
+  ],
+  "properties": {
+    "schema_id": {
+      "const": "cics.import_manifest.v1"
+    },
+    "import_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "imported_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_format": {
+      "enum": [
+        "chatgpt_raw_json",
+        "chatgpt_markdown",
+        "markdown",
+        "plain_text"
+      ]
+    },
+    "source_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "conversation_id": {
+      "type": ["string", "null"]
+    },
+    "paired_source_id": {
+      "type": ["string", "null"]
+    },
+    "content_hash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "digest"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "blake3"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "parser_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "registered",
+        "normalized",
+        "failed"
+      ]
+    }
+  }
+}

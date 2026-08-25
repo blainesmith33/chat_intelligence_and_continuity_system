@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cics.local/schemas/normalized_conversation.schema.json",
+  "title": "CICS Normalized Conversation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "source_id",
+    "source_import_id",
+    "source_format",
+    "source_file",
+    "messages"
+  ],
+  "properties": {
+    "schema_id": {
+      "const": "cics.normalized_conversation.v1"
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_import_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_format": {
+      "enum": [
+        "chatgpt_raw_json",
+        "chatgpt_markdown",
+        "markdown",
+        "plain_text"
+      ]
+    },
+    "source_file": {
+      "type": "string",
+      "minLength": 1
+    },
+    "conversation_id": {
+      "type": ["string", "null"]
+    },
+    "title": {
+      "type": ["string", "null"]
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/message"
+      }
+    }
+  },
+  "$defs": {
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ordinal",
+        "role",
+        "content"
+      ],
+      "properties": {
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "message_id": {
+          "type": ["string", "null"]
+        },
+        "parent_message_id": {
+          "type": ["string", "null"]
+        },
+        "source_node_id": {
+          "type": ["string", "null"]
+        },
+        "role": {
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool",
+            "unknown"
+          ]
+        },
+        "created_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "content": {
+          "type": "string"
+        },
+        "on_active_branch": {
+          "type": ["boolean", "null"]
+        }
+      }
+    }
+  }
+}
