@@ -1,0 +1,2585 @@
+{
+  "__paginatedConversationPage": {
+    "blockedUrls": [],
+    "cursor": "c349dd5c-51a9-4772-b1f3-afea7888f5a3",
+    "messagesLeafToRoot": [
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": "final",
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "Below is the exact lock for those remaining implementation questions.\n\n# CICS — RAG Pipeline Implementation Locks\n\n## 1. Exact deterministic chunking algorithm\n\n### 1a. Coding corpus\n\nFor the **coding corpus**, “semantic chunking” means **deterministic rule-based structural segmentation**, not model-assisted segmentation.\n\n#### Locked rule\n\nChunk on structural boundaries in this precedence order:\n\n1. document heading / section boundary\n2. explicit code block boundary\n3. paragraph boundary\n4. sentence boundary as last resort\n\n#### Hard constraints\n\n- never split inside a fenced code block unless the code block itself exceeds the max chunk target\n- prefer preserving section integrity\n- include bounded overlap only if needed for continuity\n- identical input bytes must produce identical chunk boundaries\n\n#### Operational algorithm\n\nFor each source file:\n\n1. parse into structural blocks\n   - headings\n   - paragraphs\n   - lists\n   - fenced code blocks\n2. accumulate adjacent blocks until target chunk size is approached\n3. if adding next block exceeds max size, close current chunk\n4. if a single block exceeds max size:\n   - split by sub-boundary\n   - paragraph, then sentence, then fixed fallback window if absolutely necessary\n5. emit chunk with deterministic metadata\n\n#### Initial size targets\n\nFor Phase 1 coding corpus:\n\n```text\ntarget_chunk_chars = 1800\nmax_chunk_chars = 2600\noverlap_chars = 200\n```\n\nOverlap is only applied when a split occurs across a continuous prose region. Do not overlap independent headings/blocks unnecessarily.\n\n---\n\n### 1b. Chat corpus\n\nFor the **chat corpus**, “semantic chunking” also means **deterministic rule-based structural segmentation**, not LLM segmentation.\n\n#### Locked rule\n\nChunk on these boundaries in this precedence order:\n\n1. normalized message boundary\n2. conversation-unit boundary\n3. explicit hand-off block boundary\n4. implementation/debug/decision sequence boundary\n5. fallback size limit\n\n#### Chat chunk construction\n\nAuthoritative chat pipeline is dual-layer:\n\n1. normalize raw chat into message objects\n2. derive deterministic conversation units\n3. build chunks from those units without crossing major unit boundaries unless forced by size\n\n#### Initial size targets\n\nFor Phase 1 chat corpus:\n\n```text\ntarget_chunk_chars = 2200\nmax_chunk_chars = 3200\noverlap_chars = 250\n```\n\nReason: chat reasoning often needs slightly larger context windows than coding docs.\n\n---\n\n## 2. Does “semantic chunking” mean rule-based or model-assisted?\n\n**Locked decision**\n\nFor both coding and chats:\n\n```text\nsemantic chunking = deterministic rule-based structural segmentation\n```\n\nIt does **not** mean model-assisted chunking in the authoritative pipeline.\n\nAny later model-produced summaries or topic grouping are:\n\n```text\nadvisory only\nnon-authoritative\n```\n\nThis is fully aligned with your governance pattern.\n\n---\n\n## 3. Where does `nomic-embed-text` run?\n\n**Locked decision**\n\n`nomic-embed-text` runs on the **XPS RAG node** inside the local Python environment:\n\n```text\n/home/kimberly/cics/.venv\n```\n\nIt is part of the embedding pipeline on the XPS, not the Steam Deck.\n\n### Intended stack\n\n- source corpus on disk\n- chunk JSONL files on XPS working storage\n- embedding script runs on XPS CPU\n- vectors written to `.npy`\n- ingestion script pushes vectors into local Qdrant on XPS\n\n### Hardware role\n\n- Steam Deck = interaction/orchestration\n- XPS = embedding + vector DB node\n- future 3090 workstation = heavier future inference/analysis\n\n---\n\n## 4. Is the embedding model version pinned?\n\n**Locked decision**\n\nThe model must be pinned more specifically than the family name.\n\nPhase 1 requirement:\n\n```text\nstore exact model identifier used at embedding time\n```\n\nMinimum pinned fields in manifest:\n\n```text\nmodel_family = nomic-embed-text\nmodel_identifier = exact pulled/resolved model name or package reference\nrevision = exact revision/hash if available\n```\n\n### Governance rule\n\nModel family alone is insufficient for reproducibility.\n\nIf exact revision is not yet technically captured by the script, the pipeline is still allowed for bring-up, but that gap must be treated as a reproducibility weakness to close.\n\n### Practical phase rule\n\nFor Phase 1:\n- use exact resolved model string\n- record library/package versions\n- record vector dimension actually produced\n\n---\n\n## 5. Expected vector dimension\n\n**Locked decision**\n\nThe collection vector size must be read from the actual embedding output and then fixed in the ingestion manifest.\n\nFor initial planning, assume:\n\n```text\nvector_dim = 768\n```\n\nBut the authoritative value is:\n\n```text\nthe real output dimension produced by the pinned embedding model\n```\n\n### Rule\n\nDo not hardcode dimension purely from memory if the script can inspect it.\n\nAt collection creation time:\n- inspect first embedding row\n- derive vector dimension\n- create collection with that exact size\n\n---\n\n## 6. Qdrant distance metric\n\n**Locked decision**\n\nUse:\n\n```text\nCosine\n```\n\nThis is the default intended metric for both:\n\n- coding corpus\n- chat corpus\n\nUnless a later controlled evaluation proves otherwise, Cosine remains standard.\n\n---\n\n## 7. `.npy` dtype / storage assumptions\n\n**Locked decision**\n\nEmbeddings are stored as:\n\n```text\nNumPy .npy\ndtype = float32\nshape = (row_count, vector_dim)\n```\n\n### Rule\n\n- one `.npy` per `.jsonl`\n- contiguous 2D array\n- row order matches JSONL line order exactly\n- no object dtype\n- no float64 unless forced by upstream and explicitly converted\n\n### Why float32\n\n- standard for vector DB ingestion\n- smaller than float64\n- adequate precision\n- interoperable with Qdrant client expectations\n\n---\n\n## 8. Is ingestion ordering strictly deterministic, or parallelized?\n\n**Locked decision**\n\nPhase 1 ingestion ordering is **strictly deterministic**.\n\nNo parallel ingestion in the authoritative build path.\n\n### Ordering rule\n\nProcess chunk files in:\n\n```text\nlexicographic path order\n```\n\nProcess lines within each file in:\n\n```text\nnatural file line order\n```\n\nThis gives full reproducibility.\n\n### Practical implication\n\nParallelization is deferred until after the pipeline is stable and only if determinism guarantees are preserved.\n\n---\n\n## 9. Point IDs across multiple files\n\n**Locked decision**\n\nQdrant point IDs are **global sequential integers for the entire collection build**.\n\nThey do **not** reset per file.\n\n### Rule\n\nFor one collection build:\n\n```text\nfirst point id = 0\nnext = 1\n...\n```\n\nacross all files in deterministic file order.\n\nCanonical identity remains:\n\n```text\npayload.chunk_id\n```\n\nPoint IDs are operational only.\n\n---\n\n## 10. Mid-run ingestion failure policy\n\n**Locked decision for Phase 1**\n\nFailure policy is:\n\n```text\nfull rebuild only\n```\n\nNo resume/checkpoint for Qdrant ingestion in Phase 1.\n\n### Rule\n\nIf ingestion fails mid-run:\n\n1. treat collection build as invalid\n2. delete partial collection\n3. restart full drop-and-rebuild ingestion\n\n### Why\n\n- simpler\n- deterministic\n- avoids partial-state ambiguity\n\nResume/checkpoint can be added later, but not in initial bring-up.\n\n---\n\n## 11. Default retrieval `top_k`\n\n**Locked decision**\n\nDefault retrieval:\n\n```text\ntop_k = 5\n```\n\n### Allowed operational values\n\n- default interactive retrieval: 5\n- diagnostic retrieval: 10\n- evaluation runs: configurable\n\nBut the canonical default is:\n\n```text\n5\n```\n\n---\n\n## 12. Is the coding corpus authoritative or only validation?\n\n**Locked decision**\n\nIn this transcript, the **coding corpus is a validation corpus for node bring-up**, not the primary authoritative focus of the CICS project.\n\n### Important nuance\n\nIt is still a real corpus and should be handled deterministically, but in the context of this phase its role is:\n\n```text\nbring-up validation corpus\n```\n\nUsed to verify:\n\n- chunking pipeline\n- embedding pipeline\n- Qdrant ingestion\n- retrieval behavior\n\nThe **primary authoritative target corpus for CICS** remains:\n\n```text\nthe chat corpus\n```\n\nBut chat processing is deferred until chat acquisition freeze completes.\n\n---\n\n# Final locked summary\n\n## Chunking\n```text\ndeterministic rule-based structural segmentation\nnot model-assisted\n```\n\n## Embedding runtime\n```text\nruns locally on XPS in /home/kimberly/cics/.venv\n```\n\n## Model pinning\n```text\nexact model identifier/revision should be recorded\nfamily name alone is insufficient\n```\n\n## Vector schema\n```text\ndimension = derived from actual embeddings\nplanning assumption = 768\ndistance = Cosine\ndtype = float32\n```\n\n## Ingestion\n```text\ndeterministic lexicographic file order\nglobal sequential point IDs per collection build\nPhase 1 failure policy = full rebuild\n```\n\n## Retrieval\n```text\ndefault top_k = 5\n```\n\n## Coding corpus role\n```text\nvalidation corpus for node bring-up\nnot the primary CICS target corpus\n```\n\nThese decisions are sufficient to stop re-opening the RAG node design in the next continuation chat."
+          ]
+        },
+        "create_time": 1775396615.247224,
+        "end_turn": true,
+        "id": "fbe3ad4e-3fc7-4b4a-9c2d-c9fde342a438",
+        "metadata": {
+          "can_save": false,
+          "citations": [],
+          "content_references": [],
+          "cta_by_suggested_connector_id": {
+            "connector_openai_deep_research": "Deep research into algorithm and implementation"
+          },
+          "default_model_slug": "gpt-5-3",
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "e40420b1-fcd4-4242-aa2a-111bb6d9ff51",
+          "request_id": "f7386500-b098-4bf7-9c8d-b215bc61a342",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "suggested_connector_ids": [
+            "connector_openai_deep_research"
+          ],
+          "turn_exchange_id": "4a011336-7c15-40d3-bf7e-dc715a4daaf2"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content": "Thought for a few seconds",
+          "content_type": "reasoning_recap"
+        },
+        "create_time": 1775396618.408922,
+        "end_turn": false,
+        "id": "e40420b1-fcd4-4242-aa2a-111bb6d9ff51",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "finished_duration_sec": 3,
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "b2e2fc5e-dd81-43fa-9041-310a39b5712d",
+          "reasoning_end_time": 1775396618.400458,
+          "reasoning_start_time": 1775396615.1979997,
+          "reasoning_status": "reasoning_ended",
+          "request_id": "f7386500-b098-4bf7-9c8d-b215bc61a342",
+          "search_result_groups": [],
+          "turn_exchange_id": "4a011336-7c15-40d3-bf7e-dc715a4daaf2"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "thoughts",
+          "source_analysis_msg_id": "c9bcaa39-856d-4903-a22f-0326355d41cd",
+          "thoughts": []
+        },
+        "create_time": 1775396618.033121,
+        "end_turn": false,
+        "id": "b2e2fc5e-dd81-43fa-9041-310a39b5712d",
+        "metadata": {
+          "can_save": false,
+          "citations": [],
+          "classifier_response": "default",
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "c9bcaa39-856d-4903-a22f-0326355d41cd",
+          "reasoning_start_time": 1775396615.1979997,
+          "reasoning_status": "is_reasoning",
+          "request_id": "f7386500-b098-4bf7-9c8d-b215bc61a342",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "skip_reasoning_title": "Skip",
+          "turn_exchange_id": "4a011336-7c15-40d3-bf7e-dc715a4daaf2"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "system"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ""
+          ]
+        },
+        "create_time": 1775396615.2171907,
+        "end_turn": true,
+        "id": "8e8894f2-c6bd-4ee4-a820-a4a9b33bd8f3",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "is_visually_hidden_from_conversation": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "parent_id": "fe05f1c3-b9c3-427a-b8e6-e83950cf0d09",
+          "rebase_developer_message": true,
+          "request_id": "f7386500-b098-4bf7-9c8d-b215bc61a342",
+          "turn_exchange_id": "4a011336-7c15-40d3-bf7e-dc715a4daaf2"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 0
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "user"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "What is the exact deterministic chunking algorithm for the coding corpus and later chat corpus?\nIn this transcript, “semantic chunking” is referenced repeatedly—does that mean purely rule-based segmentation or model-assisted segmentation?\nWhere does nomic-embed-text actually run in the intended implementation stack?\nIs the embedding model version pinned, or only the model family name?\nWhat is the expected vector dimension for the collection schema?\nWhat Qdrant distance metric is intended?\nFor .npy embeddings, what dtype/storage assumptions are intended?\nIs ingestion ordering strictly deterministic across files, or can ingestion be parallelized?\nWhen multiple chunk files are ingested, are Qdrant point IDs global sequential integers or reset per file?\nIf ingestion fails mid-run, is the policy full rebuild only, or resume/checkpoint?\nWhat is the default retrieval top_k?\nIs the coding corpus in this transcript treated as a permanent authoritative corpus or a validation corpus for node bring-up?"
+          ]
+        },
+        "create_time": 1775396613.613,
+        "end_turn": null,
+        "id": "fe05f1c3-b9c3-427a-b8e6-e83950cf0d09",
+        "metadata": {
+          "can_save": false,
+          "developer_mode_connector_ids": [],
+          "message_source": null,
+          "parent_id": "8570b1c4-cb7d-45cc-9a0a-9ee354700316",
+          "request_id": "f7386500-b098-4bf7-9c8d-b215bc61a342",
+          "resolved_model_slug": "gpt-5-3",
+          "selected_github_repos": [],
+          "selected_sources": [],
+          "serialization_metadata": {
+            "custom_symbol_offsets": []
+          },
+          "turn_exchange_id": "4a011336-7c15-40d3-bf7e-dc715a4daaf2"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": "final",
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "These should be locked. Here is the specification.\n\n# CICS — Corpus Governance Clarifications (Locked)\n\n## 1. Raw Archive Authority Boundary\n\n**Locked decision**\n\n`imports/raw` is **immutable by governance rule**, and should also be **protected operationally when practical**.\n\n### Authoritative rule\n\nFiles under:\n\n```text\nimports/raw\n```\n\nmust never be modified in place once created.\n\n### Enforcement model\n\nPhase 1 authority boundary is:\n\n1. **governance rule is mandatory**\n2. **filesystem read-only protection is recommended**\n3. lack of read-only permissions does **not** make mutation acceptable\n\n### Practical interpretation\n\n- immutability is not merely a suggestion\n- it is an architectural invariant\n- filesystem permissions are a defensive control, not the source of truth\n\n### Recommended implementation\n\nWhen Phase 1A is complete and the corpus is frozen:\n\n- generate the raw manifest\n- then set the raw archive tree to read-only\n\nExample operational posture:\n\n```text\nraw archive = authoritative source evidence\nnormalized/chunks/embeddings = derived artifacts\n```\n\nSo:\n\n- **immutability is hard policy**\n- **read-only permissions are strongly recommended after freeze**\n\n---\n\n## 2. Chat Identity Definition\n\n**Locked decision**\n\nCanonical `chat_id` is derived from the **project path plus filename**, not from file contents alone.\n\n### Rule\n\n```text\nchat_id = blake3(project + \"/\" + filename)\n```\n\nExample:\n\n```text\nproject = \"CICS\"\nfilename = \"CICS_Project_Index.txt\"\nchat_id = blake3(\"CICS/CICS_Project_Index.txt\")\n```\n\n### Why this is the correct identity\n\nUsing file-content hash as `chat_id` would cause identity drift if:\n\n- export formatting changes\n- whitespace changes\n- corrected exports are made later\n\nUsing filename alone is too weak because names may repeat across projects.\n\nUsing project path + filename gives:\n\n- stable identity\n- deterministic identity\n- directory-aware identity\n- no dependence on later normalization details\n\n### Important distinction\n\nTwo different identifiers should exist:\n\n#### Canonical chat identity\n```text\nchat_id = blake3(project + \"/\" + filename)\n```\n\n#### Raw file content fingerprint\n```text\nraw_file_hash = blake3(file bytes)\n```\n\n`chat_id` identifies the logical chat artifact.  \n`raw_file_hash` identifies the exact exported file bytes.\n\nBoth should be preserved.\n\n---\n\n## 3. Project Classification Authority\n\n**Locked decision**\n\nTop-level raw archive directory name is the **only authoritative source** for `project`.\n\n### Rule\n\nProject assignment may **not** be overridden by:\n\n- filename wording\n- chat contents\n- header text\n- inferred topic\n- LLM classification\n\nExample:\n\n```text\nimports/raw/Aletheia_Forensis/3a_Quality_Assessment_Engine_PQ-EC.txt\n→ project = \"Aletheia_Forensis\"\n```\n\nEven if the contents mention another project, that does not override classification.\n\n### Governance interpretation\n\n- directory structure = authoritative\n- content labels = descriptive only\n\nThis matches your broader rule set about authoritative vs descriptive data.\n\n---\n\n## 4. Corpus Completion Criteria (Hard vs Soft)\n\n**Locked decision**\n\nPhase 1A completion requires **both**:\n\n1. user declaration that import is complete\n2. manifest snapshot generation\n\n### Therefore completion is not just conversational\n\nUser declaration alone is **necessary but not sufficient**.\n\n### Phase 1A hard stop criteria\n\nTo declare corpus acquisition complete:\n\n1. user states no further imports are intended for the current freeze\n2. raw archive file set is considered final for this phase\n3. a cryptographic raw manifest is generated\n4. the corpus is marked frozen\n\nOnly then is Phase 1A complete.\n\n### Why\n\nWithout the manifest, the corpus is not auditable or reproducible.\n\n---\n\n## 5. Excluded Chat Policy Formalization\n\n**Locked decision**\n\nExcluded low-signal chats are **out of scope for the current freeze**, but **not permanently forbidden**.\n\n### Rule\n\nExcluded chats may be reintroduced later if the user determines they contain useful reasoning signal.\n\nThey are not destroyed conceptually. They are simply omitted from the current corpus boundary.\n\n### Policy status\n\nFor the current phase:\n\n```text\nexcluded = not imported\n```\n\nFor future phases:\n\n```text\nexcluded chats may be added through a new controlled import event\n```\n\n### Required behavior if reintroduced later\n\nIf previously excluded chats are imported later, that must be treated as:\n\n- a corpus change event\n- a new manifest state\n- a new freeze boundary\n\nSo they are allowed later, but not silently.\n\n---\n\n## 6. Corpus Snapshot Requirement\n\n**Locked decision**\n\nA cryptographic manifest is **required** before Phase 1A can be declared complete.\n\nThis is mandatory, not optional.\n\n### Required artifact\n\nExample:\n\n```text\nimports/raw_manifest_v1.json\n```\n\n### Minimum manifest fields\n\nFor each file:\n\n```json\n{\n  \"project\": \"CICS\",\n  \"filename\": \"CICS_Project_Index.txt\",\n  \"relative_path\": \"CICS/CICS_Project_Index.txt\",\n  \"chat_id\": \"blake3:...\",\n  \"raw_file_hash\": \"blake3:...\",\n  \"size_bytes\": 12345\n}\n```\n\n### Manifest purpose\n\nThe manifest is the cryptographic snapshot that defines:\n\n- exact corpus membership\n- exact file state\n- exact freeze boundary\n\nWithout it, the archive is only “apparently complete,” not formally frozen.\n\n---\n\n# Final locked summary\n\n## Raw archive immutability\n```text\nhard governance rule\nread-only filesystem protection recommended after freeze\n```\n\n## Chat identity\n```text\nchat_id = blake3(project + \"/\" + filename)\nraw_file_hash = blake3(file bytes)\n```\n\n## Project assignment\n```text\ntop-level raw archive directory only\nno override from content\n```\n\n## Phase 1A completion\n```text\nuser declaration + manifest snapshot required\n```\n\n## Excluded chats\n```text\nout of scope for current freeze\nmay be imported later as a new corpus change event\n```\n\n## Corpus snapshot\n```text\ncryptographic manifest required before completion\n```\n\nThese decisions close the remaining governance gaps around corpus authority and freeze-state control."
+          ]
+        },
+        "create_time": 1775396076.246357,
+        "end_turn": true,
+        "id": "8570b1c4-cb7d-45cc-9a0a-9ee354700316",
+        "metadata": {
+          "can_save": true,
+          "citations": [],
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "54d8ffa1-365a-424b-b579-d79280c5aad0",
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content": "Thought for a couple of seconds",
+          "content_type": "reasoning_recap"
+        },
+        "create_time": 1775396078.13204,
+        "end_turn": false,
+        "id": "54d8ffa1-365a-424b-b579-d79280c5aad0",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "finished_duration_sec": 2,
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "e9c96ab6-412e-4325-a4d2-37e10af52928",
+          "reasoning_end_time": 1775396078.0716615,
+          "reasoning_start_time": 1775396076.0601623,
+          "reasoning_status": "reasoning_ended",
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "search_result_groups": [],
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "thoughts",
+          "source_analysis_msg_id": "ceec81ca-56cf-462a-ba8d-6fdf89959a04",
+          "thoughts": []
+        },
+        "create_time": 1775396077.947874,
+        "end_turn": false,
+        "id": "e9c96ab6-412e-4325-a4d2-37e10af52928",
+        "metadata": {
+          "can_save": false,
+          "citations": [],
+          "classifier_response": "default",
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "ceec81ca-56cf-462a-ba8d-6fdf89959a04",
+          "reasoning_start_time": 1775396076.0601623,
+          "reasoning_status": "is_reasoning",
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "skip_reasoning_title": "Skip",
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "model_editable_context",
+          "model_set_context": "",
+          "repo_summary": null,
+          "repository": null,
+          "structured_context": null
+        },
+        "create_time": 1775396076.2495494,
+        "end_turn": null,
+        "id": "6755aaba-fd7b-470c-85ed-6b6eee4f5b34",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "a2e7b7ea-e8be-4a29-8cca-04af25146cb1",
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "search_result_groups": [],
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "system"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ""
+          ]
+        },
+        "create_time": 1775396076.061968,
+        "end_turn": true,
+        "id": "e80d6d68-8083-4bc9-9972-73399d5fc8a8",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "is_visually_hidden_from_conversation": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "parent_id": "26073d78-3661-48f5-a944-a5d84ea69863",
+          "rebase_developer_message": true,
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 0
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "user"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "1. Raw Archive Authority Boundary\n\nQuestion\nIs the raw archive (imports/raw) strictly immutable at the filesystem level, or only by convention?\n\nClarify\n\nShould the system enforce read-only permissions?\nOr is immutability a governance rule only?\n\nWhy it matters\nAffects audit guarantees and accidental corruption risk.\n\n2. Chat Identity Definition\n\nQuestion\nWhat is the canonical chat_id?\n\nOptions implied but not locked:\n\nfilename\npath (project + filename)\nhash of file contents\n\nWhy it matters\nThis becomes the primary key for:\n\nnormalization\nchunking\nlineage tracking\n3. Project Classification Authority\n\nQuestion\nIs top-level directory name the only authoritative source for project, or can it ever be overridden?\n\nWhy it matters\nPrevents future ambiguity between:\n\ndirectory structure (authoritative)\ncontent (descriptive)\n4. Corpus Completion Criteria (Hard vs Soft)\n\nQuestion\nWhat constitutes a hard stop for Phase 1A?\n\nCurrently defined as:\n\n“user confirms no further imports”\n\nClarify:\n\nIs there a required verification step? (e.g., manifest snapshot before freeze)\nOr is user declaration sufficient?\n5. Excluded Chat Policy Formalization\n\nQuestion\nAre excluded chats (low-signal chats) permanently out of scope, or can they be reintroduced later?\n\nWhy it matters\nImpacts:\n\ncompleteness of reasoning graph\npotential missing edge-case decisions\n6. Corpus Snapshot Requirement\n\nQuestion\nIs a cryptographic manifest (hash list) REQUIRED before Phase 1A completion?\n\nIt is suggested, but not locked.\n\nWhy it matters\nThis determines whether:\n\ncorpus is reproducible\ningestion is auditable"
+          ]
+        },
+        "create_time": 1775396075.042,
+        "end_turn": null,
+        "id": "26073d78-3661-48f5-a944-a5d84ea69863",
+        "metadata": {
+          "can_save": false,
+          "developer_mode_connector_ids": [],
+          "message_source": null,
+          "parent_id": "43ab6f71-1ecf-4b80-855c-ff1ed506b91c",
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "resolved_model_slug": "gpt-5-3",
+          "selected_github_repos": [],
+          "selected_sources": [],
+          "serialization_metadata": {
+            "custom_symbol_offsets": []
+          },
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": "final",
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "Agreed. Those should be locked now. Below is the concrete specification.\n\n# CICS — Remaining RAG Design Decisions (Locked)\n\n## 1. Embedding format on disk\n\n**Locked decision**\n\nFor each chunk file, there is one matching embedding file with identical row order.\n\nMapping:\n\n```text\ncorpora/coding/chunks/lua_api.jsonl\ncorpora/coding/embeddings/lua_api.npy\n```\n\nRule:\n\n- each line in `lua_api.jsonl` = one chunk object\n- each row in `lua_api.npy` = one embedding vector\n- row `N` in `.npy` corresponds to line `N` in `.jsonl`\n\nThis is authoritative.\n\n### Invariant\n\n```text\njsonl_line_index == embedding_row_index\n```\n\nNo batch-shard embedding files for Phase 1.\n\n### Why\n\n- simplest restart logic\n- deterministic mapping\n- easy integrity checking\n- no secondary index needed\n\n---\n\n## 2. Qdrant point ID strategy\n\n**Locked decision**\n\nUse **sequential integer point IDs during ingestion**, with the canonical identifier stored in payload as `chunk_id`.\n\n### Rule\n\nFor each collection build:\n\n- point IDs start at `0`\n- increment by `1`\n- are assigned in file-stream order across the ingestion run\n\nCanonical identity is:\n\n```text\npayload.chunk_id\n```\n\nQdrant point ID is operational only, not authoritative.\n\n### Why not hash-derived integer IDs\n\nHash-to-int is possible, but unnecessary and more brittle operationally. Payload `chunk_id` remains the durable identity.\n\n### Implication\n\nFuture deterministic upsert logic should key off:\n\n```text\npayload.chunk_id\n```\n\nnot the Qdrant point ID.\n\n---\n\n## 3. Collection reset policy\n\n**Locked decision for Phase 1**\n\nDuring validation and early pipeline work:\n\n```text\ndrop and rebuild collection\n```\n\nCollections are not append-only in Phase 1.\n\n### Rule\n\nFor each test ingestion run:\n\n1. delete collection if it exists\n2. recreate collection\n3. ingest full dataset from scratch\n\n### Future policy\n\nLater production behavior may move to deterministic upsert by `chunk_id`, but that is **not** Phase 1 behavior.\n\n### Collection names\n\n```text\ncoding_chunks_v1\nchat_chunks_v1\n```\n\n---\n\n## 4. Chat project labeling rule\n\n**Locked decision**\n\nProject is assigned by **top-level raw archive directory name**, not by loose inference.\n\nExample:\n\n```text\n/run/media/.../imports/raw/CICS/CICS_Project_Index.txt\n→ project = \"CICS\"\n```\n\n```text\n/run/media/.../imports/raw/Aletheia_Forensis/3a_Quality_Assessment_Engine_PQ-EC.txt\n→ project = \"Aletheia_Forensis\"\n```\n\n### Rule hierarchy\n\n1. top-level directory mapping is authoritative\n2. filename may be stored separately as `source_file`\n3. content/header text is descriptive only and must not override project assignment\n\nThis matches your broader authoritative-vs-descriptive approach.\n\n---\n\n## 5. Conversation-unit generation method\n\n**Locked decision**\n\nPhase 1 uses **deterministic rule-based segmentation only**.\n\nNo LLM-generated segmentation in the authoritative pipeline.\n\n### Unit types\n\nFor chats, create two layers:\n\n1. **message-level normalized records**\n2. **conversation units** built deterministically from message sequences\n\n### Deterministic conversation-unit examples\n\n- consecutive turns on same subtopic\n- explicit hand-off blocks\n- implementation step blocks\n- error/debug sequences\n- decision/acceptance sequences\n\n### LLM use\n\nAny LLM-produced summaries or topic grouping must be treated as:\n\n```text\nadvisory only\nnon-authoritative\n```\n\nand stored separately later if implemented.\n\n---\n\n## 6. Manifest hash scope\n\n**Locked decision**\n\nManifest scope is split by artifact type.\n\n### 6a. Chunk manifest hash\n\nHash over:\n\n```text\nchunk file bytes only\n```\n\nExample:\n\n```text\nblake3(chunks/lua_api.jsonl bytes)\n```\n\n### 6b. Embedding manifest hash\n\nHash over:\n\n- embedding file bytes\n- embedding model identifier\n- embedding config identifier\n\nConceptually:\n\n```text\nblake3(\n  embedding_file_bytes +\n  model_id +\n  model_config\n)\n```\n\n### 6c. Ingestion manifest hash\n\nHash over:\n\n- collection name\n- chunk manifest hash\n- embedding manifest hash\n- vector dimension\n- distance metric\n\nConceptually:\n\n```text\nblake3(\n  collection_name +\n  chunk_manifest_hash +\n  embedding_manifest_hash +\n  vector_size +\n  distance_metric\n)\n```\n\nThis gives a clean determinism envelope for each stage.\n\n---\n\n## 7. Normalized schema versioning\n\n**Locked decision**\n\nIntroduce explicit schema names now.\n\nInitial schema set:\n\n```text\nNormalizedChatMessageSchema_1\nChatChunkSchema_1\nChatUnitSchema_1\nCodingChunkSchema_1\nEmbeddingManifestSchema_1\nChunkManifestSchema_1\nIngestionManifestSchema_1\nRetrievalResultSchema_1\n```\n\n### Rule\n\nAll generated artifacts must declare:\n\n- `schema_name`\n- `schema_version`\n\nExample:\n\n```json\n{\n  \"schema_name\": \"CodingChunkSchema\",\n  \"schema_version\": 1\n}\n```\n\nNo silent format drift.\n\n---\n\n## 8. Retrieval API response shape\n\n**Locked decision**\n\nRetrieval returns a structured object with query metadata plus scored results.\n\n### Canonical response shape\n\n```json\n{\n  \"schema_name\": \"RetrievalResultSchema\",\n  \"schema_version\": 1,\n  \"query\": \"...\",\n  \"collection\": \"chat_chunks_v1\",\n  \"top_k\": 5,\n  \"results\": [\n    {\n      \"chunk_id\": \"blake3:...\",\n      \"score\": 0.82,\n      \"text\": \"...\",\n      \"source_file\": \"...\",\n      \"project\": \"CICS\",\n      \"corpus\": \"chats\",\n      \"doc_type\": \"chat\",\n      \"chunk_index\": 14\n    }\n  ]\n}\n```\n\n### Minimum result fields\n\n```text\nchunk_id\nscore\ntext\nsource_file\ncorpus\nchunk_index\n```\n\nFor chat results, include:\n\n```text\nproject\n```\n\nFor coding results, include:\n\n```text\ndoc_type\nlanguage\n```\n\n---\n\n# Additional locked implementation details\n\n## Embedding manifests\n\nFor each `.npy`, create a paired manifest.\n\nExample:\n\n```text\ncorpora/coding/embeddings/lua_api.npy\ncorpora/coding/manifests/lua_api.embedding_manifest.json\n```\n\nManifest fields:\n\n```json\n{\n  \"schema_name\": \"EmbeddingManifestSchema\",\n  \"schema_version\": 1,\n  \"corpus\": \"coding\",\n  \"source_chunk_file\": \"corpora/coding/chunks/lua_api.jsonl\",\n  \"embedding_file\": \"corpora/coding/embeddings/lua_api.npy\",\n  \"row_count\": 1234,\n  \"vector_dim\": 768,\n  \"model_id\": \"nomic-embed-text\",\n  \"hash_embedding_file\": \"blake3:...\",\n  \"hash_source_chunk_file\": \"blake3:...\"\n}\n```\n\n## Chunk manifests\n\nExample:\n\n```text\ncorpora/coding/manifests/lua_api.chunk_manifest.json\n```\n\nFields:\n\n```json\n{\n  \"schema_name\": \"ChunkManifestSchema\",\n  \"schema_version\": 1,\n  \"corpus\": \"coding\",\n  \"chunk_file\": \"corpora/coding/chunks/lua_api.jsonl\",\n  \"row_count\": 1234,\n  \"hash_chunk_file\": \"blake3:...\"\n}\n```\n\n## Ingestion manifests\n\nExample:\n\n```text\ncorpora/coding/manifests/coding_chunks_v1.ingestion_manifest.json\n```\n\nFields:\n\n```json\n{\n  \"schema_name\": \"IngestionManifestSchema\",\n  \"schema_version\": 1,\n  \"collection\": \"coding_chunks_v1\",\n  \"chunk_manifest_hashes\": [\"blake3:...\"],\n  \"embedding_manifest_hashes\": [\"blake3:...\"],\n  \"vector_dim\": 768,\n  \"distance_metric\": \"Cosine\",\n  \"point_count\": 1234,\n  \"ingestion_mode\": \"drop_and_rebuild\",\n  \"ingestion_hash\": \"blake3:...\"\n}\n```\n\n---\n\n# Final locked rules summary\n\n## Storage mapping\n```text\none .jsonl chunk file ↔ one .npy embedding file\nsame order, one row per line\n```\n\n## Identity\n```text\ncanonical identity = chunk_id\nqdrant point id = sequential operational integer\n```\n\n## Collection behavior\n```text\nPhase 1 = drop and rebuild\n```\n\n## Chat labeling\n```text\nproject = top-level raw archive directory\n```\n\n## Segmentation\n```text\nauthoritative pipeline = deterministic rule-based only\n```\n\n## Determinism\n```text\nseparate manifest hashes for chunking, embeddings, ingestion\n```\n\n## Schemas\n```text\nexplicit schema names and versions required\n```\n\n## Retrieval output\n```text\nstructured response with stable result fields\n```\n\nThese are now sufficient to begin implementation without re-opening core architecture."
+          ]
+        },
+        "create_time": 1773447649.363145,
+        "end_turn": true,
+        "id": "43ab6f71-1ecf-4b80-855c-ff1ed506b91c",
+        "metadata": {
+          "can_save": true,
+          "citations": [],
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "923a541f-1c0e-4489-b7d4-511499a4e327",
+          "request_id": "82892cb3-d97d-450c-ba48-cf92483e9a5c",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "turn_exchange_id": "60afcfd2-743e-456d-9e7a-416b525e6774"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content": "Thought for a couple of seconds",
+          "content_type": "reasoning_recap"
+        },
+        "create_time": 1773447650.857793,
+        "end_turn": false,
+        "id": "923a541f-1c0e-4489-b7d4-511499a4e327",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "finished_duration_sec": 1,
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "fd4cd8b1-ea33-4005-9322-713af0eceef0",
+          "reasoning_end_time": 1773447650.8518314,
+          "reasoning_start_time": 1773447649.4990277,
+          "reasoning_status": "reasoning_ended",
+          "request_id": "82892cb3-d97d-450c-ba48-cf92483e9a5c",
+          "search_result_groups": [],
+          "turn_exchange_id": "60afcfd2-743e-456d-9e7a-416b525e6774"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "thoughts",
+          "source_analysis_msg_id": "e2e6b5bf-90c2-4827-a5af-7d8ceaf399b6",
+          "thoughts": []
+        },
+        "create_time": 1773447650.516227,
+        "end_turn": false,
+        "id": "fd4cd8b1-ea33-4005-9322-713af0eceef0",
+        "metadata": {
+          "can_save": false,
+          "citations": [],
+          "classifier_response": "default",
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "e2e6b5bf-90c2-4827-a5af-7d8ceaf399b6",
+          "reasoning_start_time": 1773447649.4990277,
+          "reasoning_status": "is_reasoning",
+          "request_id": "82892cb3-d97d-450c-ba48-cf92483e9a5c",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "skip_reasoning_title": "Skip",
+          "turn_exchange_id": "60afcfd2-743e-456d-9e7a-416b525e6774"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "system"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ""
+          ]
+        },
+        "create_time": 1773447649.5007198,
+        "end_turn": true,
+        "id": "3232212a-7ef7-4451-9721-68400df9a8a7",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "is_visually_hidden_from_conversation": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "parent_id": "e4304592-82b2-4c89-8614-731c11ba681a",
+          "rebase_developer_message": true,
+          "request_id": "82892cb3-d97d-450c-ba48-cf92483e9a5c",
+          "turn_exchange_id": "60afcfd2-743e-456d-9e7a-416b525e6774"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 0
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "user"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "Yes. These are the remaining questions I would want answered before implementation.\n\n1. Exact embedding format on disk\n\nYou chose .npy, which is good, but the mapping must be explicit.\n\nNeed to lock whether:\n\neach .npy file contains vectors only, with row order matching the JSONL line order\n\nor each embedding batch is stored separately\n\nYou want the first one:\n\nlua_api.jsonl  <->  lua_api.npy\n\nOne row per JSONL line, same order.\n\nThat should be explicitly locked.\n\n2. Qdrant point ID strategy\n\nYou defined chunk_id, but Qdrant point IDs also need a concrete rule.\n\nNeed to lock whether point ID is:\n\nan integer sequence\n\nUUID\n\nderived hash integer\n\nstored only in payload while Qdrant uses autogenerated integers\n\nBest choice here:\n\nuse deterministic integer IDs derived from the hash when possible, or\n\nuse sequential integer point IDs per file and store canonical chunk_id in payload\n\nOperationally, the second is simpler. The payload remains authoritative.\n\n3. Collection reset policy\n\nNeed to define whether ingestion into an existing collection is:\n\nfull drop and rebuild\n\nappend-only\n\nupsert by chunk_id\n\nFor reproducibility, the safest Phase-1 rule is:\n\ndrop and rebuild collection during test runs\n\nlater move to deterministic upsert\n\nThat should be explicit.\n\n4. Chat project labeling rule\n\nFor normalized chats, you proposed:\n\n{\"project\":\"CICS\"}\n\nNeed to lock how project is assigned:\n\nfilename-derived\n\ndirectory-derived\n\nfrontmatter/header-derived\n\nmanual manifest mapping\n\nThis matters a lot. I would not infer loosely. Best rule is a manifest mapping or top-level directory mapping.\n\n5. Conversation-unit generation method\n\nFor the dual-layer design, need to decide whether units are:\n\nrule-based only\n\nLLM-assisted then normalized\n\nmanual later\n\nFor your standards, Phase-1 should be:\n\ndeterministic rule-based segmentation first\n\nLLM summaries only as optional advisory artifacts later\n\nThat stays aligned with your broader governance philosophy.\n\n6. Manifest hash scope\n\nYou recommended manifests with hashes, but it should be locked whether the hash is over:\n\nfile bytes only\n\ncanonical parsed content\n\ncontent plus model/config metadata\n\nBest practice:\n\nchunk manifest hash over chunk file bytes\n\nembedding manifest hash over embedding file bytes plus model identifier\n\ningestion manifest hash over collection name, chunk manifest hash, embedding manifest hash\n\n7. Normalized chat schema versioning\n\nYou should introduce explicit schema names now, even if simple:\n\nNormalizedChatMessageSchema_1\nChatChunkSchema_1\nChatUnitSchema_1\nCodingChunkSchema_1\nEmbeddingManifestSchema_1\n\nWithout that, format drift will happen quickly.\n\n8. Retrieval API response shape\n\nBefore tools are written, define what retrieval returns.\n\nExample:\n\n{\n  \"query\": \"...\",\n  \"collection\": \"chat_chunks_v1\",\n  \"results\": [\n    {\n      \"chunk_id\": \"blake3:...\",\n      \"score\": 0.82,\n      \"text\": \"...\",\n      \"source_file\": \"...\",\n      \"project\": \"CICS\"\n    }\n  ]\n}\n\nThis avoids rewriting downstream tooling later."
+          ]
+        },
+        "create_time": 1773447647.266,
+        "end_turn": null,
+        "id": "e4304592-82b2-4c89-8614-731c11ba681a",
+        "metadata": {
+          "can_save": false,
+          "developer_mode_connector_ids": [],
+          "message_source": null,
+          "parent_id": "723c5ea2-2853-49f4-9929-736a898f141a",
+          "request_id": "82892cb3-d97d-450c-ba48-cf92483e9a5c",
+          "resolved_model_slug": "gpt-5-3",
+          "selected_github_repos": [],
+          "selected_sources": [],
+          "serialization_metadata": {
+            "custom_symbol_offsets": []
+          },
+          "turn_exchange_id": "60afcfd2-743e-456d-9e7a-416b525e6774"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": "final",
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "Your list is good. Those are the exact gaps that normally break a RAG implementation later. I will answer them now so the **next chat can proceed without architectural ambiguity**. These answers are consistent with the design principles you’ve been using across projects (determinism, reproducibility, auditability).\n\n---\n\n# CICS — RAG Pipeline Design Clarifications\n\nThese decisions apply to **both corpora**:\n\n```\ncoding\nchats\n```\n\nbut chat normalization has additional rules.\n\n---\n\n# 1. Chunk File Format\n\n**Decision**\n\nUse **JSONL (JSON Lines)**.\n\nEach line = one chunk object.\n\nExample:\n\n```json\n{\"chunk_id\":\"blake3:2f93...\",\"text\":\"...\",\"source_file\":\"lua_api/file1.md\",\"chunk_index\":0,\"start_line\":0,\"end_line\":38,\"metadata\":{\"doc_type\":\"lua_api\",\"language\":\"lua\"}}\n{\"chunk_id\":\"blake3:8af1...\",\"text\":\"...\",\"source_file\":\"lua_api/file1.md\",\"chunk_index\":1,\"start_line\":39,\"end_line\":80,\"metadata\":{\"doc_type\":\"lua_api\",\"language\":\"lua\"}}\n```\n\n**File example**\n\n```\nchunks/lua_api.jsonl\nchunks/python_docs.jsonl\n```\n\n**Why JSONL**\n\n- append-friendly\n- streaming ingestion\n- minimal filesystem overhead\n- simple batch loading\n- widely used for ML pipelines\n\n---\n\n# 2. Chunk Storage Layout\n\nDirectory structure:\n\n```\ncorpora/\n  coding/\n    chunks/\n      lua_api.jsonl\n      python_docs.jsonl\n      system_docs.jsonl\n```\n\nFor chats later:\n\n```\ncorpora/\n  chats/\n    chunks/\n      Aletheia_Forensis.jsonl\n      CICS.jsonl\n      ALIP.jsonl\n```\n\n**Why**\n\n- avoids millions of small files\n- enables sequential disk streaming\n- simplifies ingestion\n\n---\n\n# 3. Metadata Schema\n\nMinimum schema:\n\n```json\n{\n  \"chunk_id\": \"blake3:...\",\n  \"text\": \"...\",\n  \"source_file\": \"...\",\n  \"chunk_index\": 0,\n  \"start_line\": 0,\n  \"end_line\": 40,\n  \"metadata\": {\n    \"corpus\": \"coding\",\n    \"doc_type\": \"lua_api\",\n    \"language\": \"lua\",\n    \"repo\": \"docs\",\n    \"section\": \"events\"\n  }\n}\n```\n\nRequired fields:\n\n```\nchunk_id\ntext\nsource_file\nchunk_index\nstart_line\nend_line\nmetadata\n```\n\nThe metadata object is flexible.\n\n---\n\n# 4. Deterministic Chunk IDs\n\nChunk IDs must be deterministic.\n\n**Decision**\n\n```\nchunk_id = blake3(source_file + chunk_index + text)\n```\n\nExample:\n\n```\nblake3:8af13c92...\n```\n\n**Why**\n\n- deterministic ingestion\n- reproducible pipelines\n- easy deduplication\n- stable references\n\nIncremental IDs are **not acceptable**.\n\n---\n\n# 5. Qdrant Payload Schema\n\nPayload stored alongside vectors:\n\n```json\n{\n  \"chunk_id\": \"blake3:...\",\n  \"text\": \"...\",\n  \"source_file\": \"lua_api/file1.md\",\n  \"chunk_index\": 0,\n  \"corpus\": \"coding\",\n  \"doc_type\": \"lua_api\",\n  \"language\": \"lua\"\n}\n```\n\nMinimum payload fields:\n\n```\nchunk_id\ntext\nsource_file\nchunk_index\ncorpus\ndoc_type\n```\n\nThese fields allow filtering such as:\n\n```\ncorpus = coding\ndoc_type = python_docs\n```\n\n---\n\n# 6. Embedding Batch Size\n\nThe XPS is **CPU-only**.\n\nRecommended batch sizes for `nomic-embed-text`:\n\n```\nbatch_size = 32\n```\n\nFallback:\n\n```\nbatch_size = 16\n```\n\nAvoid:\n\n```\n64+\n```\n\nCPU memory becomes inefficient beyond that.\n\n---\n\n# 7. Embedding Storage Strategy\n\n**Decision**\n\nUse **Strategy A (persist embeddings)**.\n\nPipeline:\n\n```\nchunks\n   ↓\nembeddings (saved)\n   ↓\nQdrant ingestion\n```\n\nDirectory:\n\n```\ncorpora/coding/embeddings\n```\n\nEmbeddings stored as:\n\n```\n.npy files\nor\nJSONL with vectors\n```\n\nRecommended format:\n\n```\nembeddings/*.npy\n```\n\nWhy:\n\n- restartable pipeline\n- deterministic ingestion\n- avoids recomputation\n\n---\n\n# 8. Coding Dataset Size (Estimate)\n\nFrom previous discussion:\n\nTypical size range:\n\n```\nfiles: 200 – 2000\ntext size: 50MB – 500MB\nchunks: 10k – 100k\n```\n\nEmbedding runtime estimate (CPU):\n\n```\n10k chunks ≈ 5–15 minutes\n100k chunks ≈ 1–2 hours\n```\n\nThis is manageable on the XPS.\n\n---\n\n# 9. Retrieval Validation Strategy\n\nUse **three-stage validation**.\n\n### Stage 1 — Smoke Test\n\nExample query:\n\n```\nlua register event\n```\n\nExpect Lua API chunks.\n\n---\n\n### Stage 2 — Targeted Queries\n\nExamples:\n\n```\npython async event loop\nfilesystem permissions linux\nlua event frame wow api\n```\n\nCheck if correct docs appear.\n\n---\n\n### Stage 3 — Cross-document retrieval\n\nTest that results come from multiple sources.\n\n---\n\n# 10. Chat Normalization Rules\n\nRaw chats:\n\n```\nimports/raw\n```\n\nNormalized chats:\n\n```\nimports/normalized\n```\n\nNormalization output format:\n\n```json\n{\n \"chat_id\": \"...\",\n \"message_index\": 34,\n \"role\": \"user\",\n \"content\": \"...\",\n \"project\": \"CICS\"\n}\n```\n\nRules:\n\n| Element | Handling |\n|------|------|\n| System messages | preserved |\n| User messages | preserved |\n| Assistant messages | preserved |\n| Code blocks | preserved exactly |\n| Markdown | preserved |\n| timestamps | ignored |\n| formatting | normalized whitespace |\n\nChunking occurs **after normalization**.\n\n---\n\n# Final Architecture Summary\n\nChunk format\n\n```\nJSONL\n```\n\nChunk IDs\n\n```\nblake3 deterministic\n```\n\nEmbeddings\n\n```\nstored locally first\n```\n\nVector database\n\n```\nQdrant collections\n```\n\nCollections\n\n```\ncoding_chunks_v1\nchat_chunks_v1\n```\n\nBatch size\n\n```\n32\n```\n\nNormalization\n\n```\nstructured message objects\n```\n\n---\n\n# One Important Improvement (Recommended)\n\nAdd this directory to the project:\n\n```\ncorpora/*/manifests\n```\n\nExample:\n\n```\ncorpora/coding/manifests/chunk_manifest.json\n```\n\nManifest records:\n\n```\nfile\nchunk_count\nhash\ngeneration_timestamp\n```\n\nThis gives **reproducible ingestion**.\n\n---\n\nIf you'd like, I can also give you the **cleanest possible architecture diagram for the entire CICS RAG pipeline** so the new chat never drifts or re-debates these decisions."
+          ]
+        },
+        "create_time": 1773447431.977246,
+        "end_turn": true,
+        "id": "723c5ea2-2853-49f4-9929-736a898f141a",
+        "metadata": {
+          "can_save": true,
+          "citations": [],
+          "code_blocks": {
+            "0": {
+              "edited": false,
+              "id": "gtsvyw",
+              "preview_language": null,
+              "previewable": false
+            },
+            "1": {
+              "edited": false,
+              "id": "viokog",
+              "preview_language": null,
+              "previewable": false
+            },
+            "2": {
+              "edited": false,
+              "id": "cpsyi2",
+              "preview_language": null,
+              "previewable": false
+            },
+            "3": {
+              "edited": false,
+              "id": "mxpwvw",
+              "preview_language": null,
+              "previewable": false
+            },
+            "4": {
+              "edited": false,
+              "id": "w6vh2b",
+              "preview_language": null,
+              "previewable": false
+            },
+            "5": {
+              "edited": false,
+              "id": "wibc0h",
+              "preview_language": null,
+              "previewable": false
+            },
+            "6": {
+              "edited": false,
+              "id": "0kjsdv",
+              "preview_language": null,
+              "previewable": false
+            },
+            "7": {
+              "edited": false,
+              "id": "iyp40i",
+              "preview_language": null,
+              "previewable": false
+            },
+            "8": {
+              "edited": false,
+              "id": "l2rks7",
+              "preview_language": null,
+              "previewable": false
+            },
+            "9": {
+              "edited": false,
+              "id": "wh4nc0",
+              "preview_language": null,
+              "previewable": false
+            },
+            "10": {
+              "edited": false,
+              "id": "83b781",
+              "preview_language": null,
+              "previewable": false
+            },
+            "11": {
+              "edited": false,
+              "id": "52tmeu",
+              "preview_language": null,
+              "previewable": false
+            },
+            "12": {
+              "edited": false,
+              "id": "3na0g0",
+              "preview_language": null,
+              "previewable": false
+            },
+            "13": {
+              "edited": false,
+              "id": "qj3qn3",
+              "preview_language": null,
+              "previewable": false
+            },
+            "14": {
+              "edited": false,
+              "id": "d7lq4r",
+              "preview_language": null,
+              "previewable": false
+            },
+            "15": {
+              "edited": false,
+              "id": "q8b952",
+              "preview_language": null,
+              "previewable": false
+            },
+            "16": {
+              "edited": false,
+              "id": "8p3wh3",
+              "preview_language": null,
+              "previewable": false
+            },
+            "17": {
+              "edited": false,
+              "id": "nyze80",
+              "preview_language": null,
+              "previewable": false
+            },
+            "18": {
+              "edited": false,
+              "id": "j8v62m",
+              "preview_language": null,
+              "previewable": false
+            },
+            "19": {
+              "edited": false,
+              "id": "5rf0dq",
+              "preview_language": null,
+              "previewable": false
+            },
+            "20": {
+              "edited": false,
+              "id": "o153c1",
+              "preview_language": null,
+              "previewable": false
+            },
+            "21": {
+              "edited": false,
+              "id": "49g5m5",
+              "preview_language": null,
+              "previewable": false
+            },
+            "22": {
+              "edited": false,
+              "id": "hvt4mi",
+              "preview_language": null,
+              "previewable": false
+            },
+            "23": {
+              "edited": false,
+              "id": "bst87i",
+              "preview_language": null,
+              "previewable": false
+            },
+            "24": {
+              "edited": false,
+              "id": "7v0nl4",
+              "preview_language": null,
+              "previewable": false
+            },
+            "25": {
+              "edited": false,
+              "id": "7bq8v2",
+              "preview_language": null,
+              "previewable": false
+            },
+            "26": {
+              "edited": false,
+              "id": "z7bl0j",
+              "preview_language": null,
+              "previewable": false
+            },
+            "27": {
+              "edited": false,
+              "id": "o4ew6g",
+              "preview_language": null,
+              "previewable": false
+            },
+            "28": {
+              "edited": false,
+              "id": "l16f9l",
+              "preview_language": null,
+              "previewable": false
+            },
+            "29": {
+              "edited": false,
+              "id": "qi6m7x",
+              "preview_language": null,
+              "previewable": false
+            },
+            "30": {
+              "edited": false,
+              "id": "rz1l6q",
+              "preview_language": null,
+              "previewable": false
+            },
+            "31": {
+              "edited": false,
+              "id": "u8d1pp",
+              "preview_language": null,
+              "previewable": false
+            },
+            "32": {
+              "edited": false,
+              "id": "5pvvjz",
+              "preview_language": null,
+              "previewable": false
+            },
+            "33": {
+              "edited": false,
+              "id": "nf4ym3",
+              "preview_language": null,
+              "previewable": false
+            },
+            "34": {
+              "edited": false,
+              "id": "i1tp1q",
+              "preview_language": null,
+              "previewable": false
+            },
+            "35": {
+              "edited": false,
+              "id": "fbqni8",
+              "preview_language": null,
+              "previewable": false
+            }
+          },
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "finish_details": {
+            "stop_tokens": [
+              200002
+            ],
+            "type": "stop"
+          },
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "is_complete": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "e0b83be4-2d61-4e06-ab0e-064c58dd1310",
+          "request_id": "4298b0de-ff64-4d64-8d58-0d49bfe4c6d4",
+          "resolved_model_slug": "gpt-5-3",
+          "search_result_groups": [],
+          "turn_exchange_id": "c27d66c4-2e0d-474e-99ee-5fbb0df1076e"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "user"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "1. Chunk File Format (Critical)\n\nThe hand-off states that chunking will produce data in:\n\ncorpora/chats/chunks\ncorpora/coding/chunks\n\nBut the actual chunk format is unspecified.\n\nThe next chat must clarify:\n\nQuestion\n\nWhat does a chunk file look like?\n\nPossible formats:\n\nOption A — JSON\n\n{\n  \"chunk_id\": \"...\",\n  \"text\": \"...\",\n  \"source_file\": \"...\",\n  \"start_line\": 0,\n  \"end_line\": 40,\n  \"metadata\": {}\n}\n\nOption B — JSONL\n\n{chunk}\n{chunk}\n{chunk}\n\nOption C — plain text + metadata file\n\nOption D — pickle / binary\n\nWhy it matters\n\nThis determines:\n\ningestion speed\n\nbatch loading strategy\n\nembedding pipeline design\n\nQdrant payload schema\n\n2. Chunk Storage Layout\n\nThe directory exists but the expected structure is undefined.\n\nQuestion to previous chat:\n\nAre chunks stored as:\n\nchunks/\n  000001.json\n  000002.json\n\nor\n\nchunks/\n  source_file/\n     chunk_1.json\n     chunk_2.json\n\nor\n\nchunks.jsonl\n\nThis determines the reader implementation.\n\n3. Metadata Schema\n\nThe system defines a metadata directory:\n\ncorpora/coding/metadata\n\nBut the schema is unknown.\n\nAsk:\n\nWhat metadata fields must exist?\n\nExample payload candidates:\n\n{\n  \"source_file\": \"...\",\n  \"repo\": \"...\",\n  \"doc_type\": \"...\",\n  \"language\": \"...\",\n  \"section\": \"...\",\n  \"chunk_index\": 0\n}\n\nor something else.\n\nThis directly affects Qdrant payload indexing.\n\n4. Chunk ID Determinism\n\nYour architecture generally prefers deterministic IDs (based on how your other projects operate).\n\nConfirm:\n\nShould chunk IDs be derived from:\n\nblake3(text)\n\nor\n\nsource_file + offset\n\nor\n\nincremental IDs\n\nThis determines whether ingestion is reproducible.\n\n5. Vector Payload Design\n\nWe must know what payload accompanies vectors.\n\nExample:\n\n{\n \"text\": \"...\",\n \"source_file\": \"...\",\n \"path\": \"...\",\n \"chunk_id\": \"...\",\n \"doc_type\": \"coding_doc\"\n}\n\nAsk:\n\nWhat fields must be stored in Qdrant payload?\n\nWithout this, retrieval tools will break later.\n\n6. Embedding Batch Size\n\nEmbedding generation speed depends heavily on batching.\n\nAsk:\n\nShould embeddings run:\n\nsingle chunk\nbatch size 16\nbatch size 32\nbatch size 64\n\nThe XPS is CPU-only, so the optimal value matters.\n\n7. Embedding Storage Purpose\n\nThe directory:\n\ncorpora/*/embeddings\n\nexists.\n\nAsk the previous chat:\n\nAre embeddings stored locally before insertion into Qdrant, or only generated in-memory?\n\nPossible models:\n\nStrategy A\nchunks → embeddings → qdrant\nStrategy B\nchunks → embed → insert directly\n\nYour layout implies Strategy A, but confirmation is required.\n\n8. Coding Dataset Size\n\nAsk:\n\nHow large is the coding dataset?\n\nImportant metrics:\n\nnumber_of_files\nestimated_chunks\ntotal_text_size\n\nThis determines ingestion time.\n\n9. Retrieval Testing Strategy\n\nAsk:\n\nWhat retrieval evaluation method was planned?\n\nExamples:\n\nmanual query tests\ngolden queries\nautomatic relevance scoring\n\nThe handoff only states:\n\nvalidate retrieval queries\n\nbut gives no procedure.\n\n10. Chat Normalization Stage\n\nYour chat ingestion pipeline includes a step:\n\nraw → normalization → chunking\n\nBut the normalization rules were never defined.\n\nQuestions:\n\nWill system messages be removed?\n\nAre timestamps preserved?\n\nAre speaker roles encoded?\n\nAre code blocks preserved?\n\nThese choices strongly affect RAG quality.\n\nSummary\n\nThese are the minimal questions the previous chat must answer before implementation begins:\n\nChunk file format\n\nChunk directory structure\n\nMetadata schema\n\nDeterministic chunk ID strategy\n\nQdrant payload schema\n\nEmbedding batch size\n\nWhether embeddings are persisted before ingestion\n\nCoding dataset size\n\nRetrieval validation method\n\nChat normalization rules"
+          ]
+        },
+        "create_time": 1773447431.589,
+        "end_turn": null,
+        "id": "e0b83be4-2d61-4e06-ab0e-064c58dd1310",
+        "metadata": {
+          "can_save": false,
+          "developer_mode_connector_ids": [],
+          "message_source": null,
+          "parent_id": "905bbfa2-e4d3-476a-9494-1d8bbc7db077",
+          "request_id": "4298b0de-ff64-4d64-8d58-0d49bfe4c6d4",
+          "resolved_model_slug": "gpt-5-3",
+          "selected_github_repos": [],
+          "selected_sources": [],
+          "serialization_metadata": {
+            "custom_symbol_offsets": []
+          },
+          "turn_exchange_id": "c27d66c4-2e0d-474e-99ee-5fbb0df1076e"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": "final",
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ":::writing{variant=\"standard\" id=\"10421\"}\n# CICS — RAG Node Continuation Hand-Off\n\nPROJECT: CICS — Chat Intelligence & Continuity System  \nPORTFOLIO: UMB  \nCHAT ROLE: Infrastructure / RAG Node Setup  \nSTATUS: CONTINUATION REQUIRED\n\n---\n\n# 1. Purpose of This Chat\n\nThis session prepared the **XPS-13-9360** as the dedicated **RAG ingestion and vector node** for the CICS system after installing a **fresh OS on the MP600 2TB NVMe**.\n\nThe goal of the work completed in this chat was to:\n\n1. Establish the working directory layout for the RAG node.\n2. Install container infrastructure.\n3. Deploy Qdrant as the vector database.\n4. Prepare the machine for large embedding workloads.\n\nNo chat corpus processing has begun.\n\n---\n\n# 2. Hardware Role Confirmation\n\n| Machine | Role |\n|---|---|\n| Steam Deck | Local AI interaction node |\n| XPS-13-9360 | RAG ingestion + vector database node |\n| Future RTX 3090 workstation | Heavy inference / advanced analysis |\n\nThe XPS will host:\n\n- embedding generation\n- chunk ingestion\n- vector database (Qdrant)\n- retrieval API\n\n---\n\n# 3. Storage Architecture\n\nInternal drive (MP600 NVMe):\n\n```\n/home/kimberly/cics\n```\n\nPurpose:\n\n- active RAG working directory\n- embeddings\n- chunk storage\n- vector database storage\n- manifests\n- logs\n- tools\n\nExternal drive (WDBlack):\n\n```\n/run/media/kimberly/WDBlack/cics/imports/raw\n```\n\nPurpose:\n\n- **immutable raw chat archive**\n- treated as forensic source data\n- must never be modified\n\nThe raw archive currently contains:\n\n```\n14 directories\n77 chat files\n```\n\n---\n\n# 4. Directory Structure Created\n\nWorking directory on the XPS:\n\n```\n/home/kimberly/cics\n```\n\nCurrent layout:\n\n```\n/home/kimberly/cics\n│\n├── corpora\n│   ├── chats\n│   │   ├── chunks\n│   │   ├── embeddings\n│   │   └── retrieval\n│   │\n│   └── coding\n│       ├── sources\n│       ├── chunks\n│       ├── embeddings\n│       └── metadata\n│\n├── vector_store\n│   ├── chats\n│   └── coding\n│\n├── manifests\n├── schemas\n├── logs\n├── tools\n└── runtime\n```\n\nThe **chat corpus pipeline is not active yet**.\n\n---\n\n# 5. Docker Installation\n\nDocker was installed on the XPS to run infrastructure services.\n\nValidation performed:\n\n```\ndocker --version\ndocker run hello-world\n```\n\nDocker service enabled.\n\n---\n\n# 6. Qdrant Deployment\n\nQdrant was deployed as a Docker container.\n\nCommand used:\n\n```\ndocker run -d \\\n  --name qdrant \\\n  -p 6333:6333 \\\n  -p 6334:6334 \\\n  -v /home/kimberly/cics/vector_store/qdrant:/qdrant/storage \\\n  --restart unless-stopped \\\n  qdrant/qdrant\n```\n\nContainer successfully pulled and started.\n\nPersistent storage directory:\n\n```\n/home/kimberly/cics/vector_store/qdrant\n```\n\nPorts exposed:\n\n```\n6333 REST API\n6334 gRPC\n```\n\nThe vector database is now operational.\n\n---\n\n# 7. System Limits Adjustment\n\nThe system open-file descriptor limit was raised to support large ingestion workloads.\n\nFile edited:\n\n```\n/etc/security/limits.conf\n```\n\nLines added:\n\n```\n* soft nofile 65535\n* hard nofile 65535\n```\n\nVerification confirmed the lines exist.\n\nThe limit will apply after a new login session or reboot.\n\n---\n\n# 8. Python Environment Preparation\n\nPlanned Python environment location:\n\n```\n/home/kimberly/cics/.venv\n```\n\nThis environment will host:\n\n- embedding pipeline\n- ingestion scripts\n- Qdrant client\n- retrieval utilities\n\nInstallation of packages is deferred to the next session.\n\n---\n\n# 9. Coding RAG Dataset Plan\n\nBefore embedding the chat corpus, the system will restore and re-embed an existing **coding documentation dataset**.\n\nPurpose:\n\n- validate embedding pipeline\n- validate Qdrant indexing\n- validate retrieval queries\n\nThe coding dataset will live in:\n\n```\n/home/kimberly/cics/corpora/coding\n```\n\nStructure:\n\n```\nsources\nchunks\nembeddings\nmetadata\n```\n\nVector collection name planned:\n\n```\ncoding_chunks_v1\n```\n\n---\n\n# 10. Chat Corpus Status\n\nThe chat corpus pipeline has **not begun yet**.\n\nCurrent archive:\n\n```\n/run/media/kimberly/WDBlack/cics/imports/raw\n```\n\nStatus:\n\n```\n14 directories\n77 chat files\n```\n\nChat ingestion must complete before:\n\n```\nnormalization\nchunking\nembedding\nvector indexing\n```\n\nbegin.\n\n---\n\n# 11. Technology Decisions (Locked)\n\nEmbedding model:\n\n```\nnomic-embed-text\n```\n\nVector database:\n\n```\nQdrant\n```\n\nChunking approach:\n\n```\nsemantic chunking with structural boundary preservation\n```\n\n---\n\n# 12. Current System State\n\nThe XPS node now has:\n\n| Component | Status |\n|---|---|\n| Fresh OS install | complete |\n| MP600 NVMe working disk | active |\n| CICS directory structure | created |\n| Docker | installed |\n| Qdrant | running |\n| vector storage mount | configured |\n| system file-descriptor limits | configured |\n\nThe node is now ready to begin **coding corpus ingestion testing**.\n\n---\n\n# 13. Immediate Next Tasks\n\nThe continuation chat should perform the following:\n\n1. Verify Qdrant API connectivity.\n2. Create the Python virtual environment.\n3. Install embedding and ingestion dependencies.\n4. Restore the coding documentation corpus.\n5. Restart the coding embedding pipeline.\n6. Insert vectors into Qdrant.\n7. Validate retrieval queries.\n\nThe chat corpus will remain untouched until Phase-1A ingestion completes.\n\n---\n\n# 14. Continuation Instruction\n\nThe next chat should begin with:\n\n```\nCICS RAG Node — Coding Corpus Restoration\n```\n\nand continue infrastructure validation before processing the chat dataset.\n\n---\n\nEND OF HAND-OFF\n:::"
+          ]
+        },
+        "create_time": 1773447264.252893,
+        "end_turn": true,
+        "id": "905bbfa2-e4d3-476a-9494-1d8bbc7db077",
+        "metadata": {
+          "can_save": true,
+          "citations": [],
+          "code_blocks": {
+            "0": {
+              "edited": false,
+              "id": "2nb9ls",
+              "preview_language": null,
+              "previewable": false
+            },
+            "1": {
+              "edited": false,
+              "id": "4r0pa3",
+              "preview_language": null,
+              "previewable": false
+            },
+            "2": {
+              "edited": false,
+              "id": "ao1ycy",
+              "preview_language": null,
+              "previewable": false
+            },
+            "3": {
+              "edited": false,
+              "id": "6metv0",
+              "preview_language": null,
+              "previewable": false
+            },
+            "4": {
+              "edited": false,
+              "id": "wd36wy",
+              "preview_language": null,
+              "previewable": false
+            },
+            "5": {
+              "edited": false,
+              "id": "5dszid",
+              "preview_language": null,
+              "previewable": false
+            },
+            "6": {
+              "edited": false,
+              "id": "btuz3a",
+              "preview_language": null,
+              "previewable": false
+            },
+            "7": {
+              "edited": false,
+              "id": "vd5fkp",
+              "preview_language": null,
+              "previewable": false
+            },
+            "8": {
+              "edited": false,
+              "id": "jqg3qz",
+              "preview_language": null,
+              "previewable": false
+            },
+            "9": {
+              "edited": false,
+              "id": "gjiusl",
+              "preview_language": null,
+              "previewable": false
+            },
+            "10": {
+              "edited": false,
+              "id": "ws1rp0",
+              "preview_language": null,
+              "previewable": false
+            },
+            "11": {
+              "edited": false,
+              "id": "o3txg0",
+              "preview_language": null,
+              "previewable": false
+            },
+            "12": {
+              "edited": false,
+              "id": "k23c23",
+              "preview_language": null,
+              "previewable": false
+            },
+            "13": {
+              "edited": false,
+              "id": "gjxa80",
+              "preview_language": null,
+              "previewable": false
+            },
+            "14": {
+              "edited": false,
+              "id": "0lrg36",
+              "preview_language": null,
+              "previewable": false
+            },
+            "15": {
+              "edited": false,
+              "id": "b1c2eg",
+              "preview_language": null,
+              "previewable": false
+            },
+            "16": {
+              "edited": false,
+              "id": "5f147v",
+              "preview_language": null,
+              "previewable": false
+            },
+            "17": {
+              "edited": false,
+              "id": "kpypv1",
+              "preview_language": null,
+              "previewable": false
+            },
+            "18": {
+              "edited": false,
+              "id": "xy2tq8",
+              "preview_language": null,
+              "previewable": false
+            },
+            "19": {
+              "edited": false,
+              "id": "v6184p",
+              "preview_language": null,
+              "previewable": false
+            },
+            "20": {
+              "edited": false,
+              "id": "j7vk3j",
+              "preview_language": null,
+              "previewable": false
+            },
+            "21": {
+              "edited": false,
+              "id": "dcj8ti",
+              "preview_language": null,
+              "previewable": false
+            }
+          },
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "finish_details": {
+            "stop_tokens": [
+              200002
+            ],
+            "type": "stop"
+          },
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "is_complete": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "34fbe744-cc04-41df-a5e7-26787568ef08",
+          "request_id": "2e183db8-0d1b-43bc-abcf-12505b28246a",
+          "resolved_model_slug": "gpt-5-3",
+          "search_result_groups": [],
+          "turn_exchange_id": "15ca2bcf-6066-4f42-857a-a32127088ba9"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "model_editable_context",
+          "model_set_context": "",
+          "repo_summary": null,
+          "repository": null,
+          "structured_context": null
+        },
+        "create_time": 1773447264.2560046,
+        "end_turn": null,
+        "id": "34fbe744-cc04-41df-a5e7-26787568ef08",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "84e9f3a3-5cff-4d75-978d-309a7baa7af0",
+          "request_id": "2e183db8-0d1b-43bc-abcf-12505b28246a",
+          "search_result_groups": [],
+          "turn_exchange_id": "15ca2bcf-6066-4f42-857a-a32127088ba9"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "system"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ""
+          ]
+        },
+        "create_time": 1773447264.044395,
+        "end_turn": true,
+        "id": "84e9f3a3-5cff-4d75-978d-309a7baa7af0",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "is_visually_hidden_from_conversation": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "parent_id": "1f3c3a4e-9baa-4a58-9c67-17b2f5866e84",
+          "rebase_developer_message": true,
+          "request_id": "2e183db8-0d1b-43bc-abcf-12505b28246a",
+          "turn_exchange_id": "15ca2bcf-6066-4f42-857a-a32127088ba9"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 0
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "system"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ""
+          ]
+        },
+        "create_time": 1773447263.983216,
+        "end_turn": true,
+        "id": "1f3c3a4e-9baa-4a58-9c67-17b2f5866e84",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "is_visually_hidden_from_conversation": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "parent_id": "c349dd5c-51a9-4772-b1f3-afea7888f5a3",
+          "rebase_system_message": true,
+          "request_id": "2e183db8-0d1b-43bc-abcf-12505b28246a",
+          "turn_exchange_id": "15ca2bcf-6066-4f42-857a-a32127088ba9"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 0
+      },
+      {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "user"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "ok, this chat is degrading. can you please give me a clean hand-off of everything we did in this chat, and the state. and I'll start a new continuation chat."
+          ]
+        },
+        "create_time": 1773447263.684,
+        "end_turn": null,
+        "id": "c349dd5c-51a9-4772-b1f3-afea7888f5a3",
+        "metadata": {
+          "can_save": false,
+          "developer_mode_connector_ids": [],
+          "message_source": null,
+          "parent_id": "b32c1d66-a8ac-4c25-bf2f-fee8b04a9244",
+          "request_id": "2e183db8-0d1b-43bc-abcf-12505b28246a",
+          "resolved_model_slug": "gpt-5-3",
+          "selected_github_repos": [],
+          "selected_sources": [],
+          "serialization_metadata": {
+            "custom_symbol_offsets": []
+          },
+          "turn_exchange_id": "15ca2bcf-6066-4f42-857a-a32127088ba9"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      }
+    ],
+    "moderationResults": [],
+    "numTurns": 10,
+    "oldestMessageId": "c349dd5c-51a9-4772-b1f3-afea7888f5a3",
+    "safeUrls": [],
+    "serverCurrentLeafId": "fbe3ad4e-3fc7-4b4a-9c2d-c9fde342a438"
+  },
+  "async_status": null,
+  "atlas_mode_enabled": null,
+  "blocked_urls": [],
+  "context_scopes": [],
+  "context_truncation_continuation": null,
+  "conversation_id": "69b2470e-8fdc-832e-800f-c0f8c7130db8",
+  "conversation_origin": null,
+  "conversation_template_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+  "create_time": 1773291309.683519,
+  "current_node": "fbe3ad4e-3fc7-4b4a-9c2d-c9fde342a438",
+  "default_model_slug": "gpt-5-3",
+  "disabled_tool_ids": [],
+  "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+  "gizmo_type": "snorlax",
+  "is_archived": false,
+  "is_do_not_remember": false,
+  "is_read_only": null,
+  "is_starred": null,
+  "is_study_mode": false,
+  "is_temporary_chat": false,
+  "mapping": {
+    "1f3c3a4e-9baa-4a58-9c67-17b2f5866e84": {
+      "children": [
+        "84e9f3a3-5cff-4d75-978d-309a7baa7af0"
+      ],
+      "id": "1f3c3a4e-9baa-4a58-9c67-17b2f5866e84",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "system"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ""
+          ]
+        },
+        "create_time": 1773447263.983216,
+        "end_turn": true,
+        "id": "1f3c3a4e-9baa-4a58-9c67-17b2f5866e84",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "is_visually_hidden_from_conversation": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "parent_id": "c349dd5c-51a9-4772-b1f3-afea7888f5a3",
+          "rebase_system_message": true,
+          "request_id": "2e183db8-0d1b-43bc-abcf-12505b28246a",
+          "turn_exchange_id": "15ca2bcf-6066-4f42-857a-a32127088ba9"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 0
+      },
+      "parent": "c349dd5c-51a9-4772-b1f3-afea7888f5a3"
+    },
+    "26073d78-3661-48f5-a944-a5d84ea69863": {
+      "children": [
+        "e80d6d68-8083-4bc9-9972-73399d5fc8a8"
+      ],
+      "id": "26073d78-3661-48f5-a944-a5d84ea69863",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "user"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "1. Raw Archive Authority Boundary\n\nQuestion\nIs the raw archive (imports/raw) strictly immutable at the filesystem level, or only by convention?\n\nClarify\n\nShould the system enforce read-only permissions?\nOr is immutability a governance rule only?\n\nWhy it matters\nAffects audit guarantees and accidental corruption risk.\n\n2. Chat Identity Definition\n\nQuestion\nWhat is the canonical chat_id?\n\nOptions implied but not locked:\n\nfilename\npath (project + filename)\nhash of file contents\n\nWhy it matters\nThis becomes the primary key for:\n\nnormalization\nchunking\nlineage tracking\n3. Project Classification Authority\n\nQuestion\nIs top-level directory name the only authoritative source for project, or can it ever be overridden?\n\nWhy it matters\nPrevents future ambiguity between:\n\ndirectory structure (authoritative)\ncontent (descriptive)\n4. Corpus Completion Criteria (Hard vs Soft)\n\nQuestion\nWhat constitutes a hard stop for Phase 1A?\n\nCurrently defined as:\n\n“user confirms no further imports”\n\nClarify:\n\nIs there a required verification step? (e.g., manifest snapshot before freeze)\nOr is user declaration sufficient?\n5. Excluded Chat Policy Formalization\n\nQuestion\nAre excluded chats (low-signal chats) permanently out of scope, or can they be reintroduced later?\n\nWhy it matters\nImpacts:\n\ncompleteness of reasoning graph\npotential missing edge-case decisions\n6. Corpus Snapshot Requirement\n\nQuestion\nIs a cryptographic manifest (hash list) REQUIRED before Phase 1A completion?\n\nIt is suggested, but not locked.\n\nWhy it matters\nThis determines whether:\n\ncorpus is reproducible\ningestion is auditable"
+          ]
+        },
+        "create_time": 1775396075.042,
+        "end_turn": null,
+        "id": "26073d78-3661-48f5-a944-a5d84ea69863",
+        "metadata": {
+          "can_save": false,
+          "developer_mode_connector_ids": [],
+          "message_source": null,
+          "parent_id": "43ab6f71-1ecf-4b80-855c-ff1ed506b91c",
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "resolved_model_slug": "gpt-5-3",
+          "selected_github_repos": [],
+          "selected_sources": [],
+          "serialization_metadata": {
+            "custom_symbol_offsets": []
+          },
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "43ab6f71-1ecf-4b80-855c-ff1ed506b91c"
+    },
+    "3232212a-7ef7-4451-9721-68400df9a8a7": {
+      "children": [
+        "fd4cd8b1-ea33-4005-9322-713af0eceef0"
+      ],
+      "id": "3232212a-7ef7-4451-9721-68400df9a8a7",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "system"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ""
+          ]
+        },
+        "create_time": 1773447649.5007198,
+        "end_turn": true,
+        "id": "3232212a-7ef7-4451-9721-68400df9a8a7",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "is_visually_hidden_from_conversation": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "parent_id": "e4304592-82b2-4c89-8614-731c11ba681a",
+          "rebase_developer_message": true,
+          "request_id": "82892cb3-d97d-450c-ba48-cf92483e9a5c",
+          "turn_exchange_id": "60afcfd2-743e-456d-9e7a-416b525e6774"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 0
+      },
+      "parent": "e4304592-82b2-4c89-8614-731c11ba681a"
+    },
+    "34fbe744-cc04-41df-a5e7-26787568ef08": {
+      "children": [
+        "905bbfa2-e4d3-476a-9494-1d8bbc7db077"
+      ],
+      "id": "34fbe744-cc04-41df-a5e7-26787568ef08",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "model_editable_context",
+          "model_set_context": "",
+          "repo_summary": null,
+          "repository": null,
+          "structured_context": null
+        },
+        "create_time": 1773447264.2560046,
+        "end_turn": null,
+        "id": "34fbe744-cc04-41df-a5e7-26787568ef08",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "84e9f3a3-5cff-4d75-978d-309a7baa7af0",
+          "request_id": "2e183db8-0d1b-43bc-abcf-12505b28246a",
+          "search_result_groups": [],
+          "turn_exchange_id": "15ca2bcf-6066-4f42-857a-a32127088ba9"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "84e9f3a3-5cff-4d75-978d-309a7baa7af0"
+    },
+    "43ab6f71-1ecf-4b80-855c-ff1ed506b91c": {
+      "children": [
+        "26073d78-3661-48f5-a944-a5d84ea69863"
+      ],
+      "id": "43ab6f71-1ecf-4b80-855c-ff1ed506b91c",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": "final",
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "Agreed. Those should be locked now. Below is the concrete specification.\n\n# CICS — Remaining RAG Design Decisions (Locked)\n\n## 1. Embedding format on disk\n\n**Locked decision**\n\nFor each chunk file, there is one matching embedding file with identical row order.\n\nMapping:\n\n```text\ncorpora/coding/chunks/lua_api.jsonl\ncorpora/coding/embeddings/lua_api.npy\n```\n\nRule:\n\n- each line in `lua_api.jsonl` = one chunk object\n- each row in `lua_api.npy` = one embedding vector\n- row `N` in `.npy` corresponds to line `N` in `.jsonl`\n\nThis is authoritative.\n\n### Invariant\n\n```text\njsonl_line_index == embedding_row_index\n```\n\nNo batch-shard embedding files for Phase 1.\n\n### Why\n\n- simplest restart logic\n- deterministic mapping\n- easy integrity checking\n- no secondary index needed\n\n---\n\n## 2. Qdrant point ID strategy\n\n**Locked decision**\n\nUse **sequential integer point IDs during ingestion**, with the canonical identifier stored in payload as `chunk_id`.\n\n### Rule\n\nFor each collection build:\n\n- point IDs start at `0`\n- increment by `1`\n- are assigned in file-stream order across the ingestion run\n\nCanonical identity is:\n\n```text\npayload.chunk_id\n```\n\nQdrant point ID is operational only, not authoritative.\n\n### Why not hash-derived integer IDs\n\nHash-to-int is possible, but unnecessary and more brittle operationally. Payload `chunk_id` remains the durable identity.\n\n### Implication\n\nFuture deterministic upsert logic should key off:\n\n```text\npayload.chunk_id\n```\n\nnot the Qdrant point ID.\n\n---\n\n## 3. Collection reset policy\n\n**Locked decision for Phase 1**\n\nDuring validation and early pipeline work:\n\n```text\ndrop and rebuild collection\n```\n\nCollections are not append-only in Phase 1.\n\n### Rule\n\nFor each test ingestion run:\n\n1. delete collection if it exists\n2. recreate collection\n3. ingest full dataset from scratch\n\n### Future policy\n\nLater production behavior may move to deterministic upsert by `chunk_id`, but that is **not** Phase 1 behavior.\n\n### Collection names\n\n```text\ncoding_chunks_v1\nchat_chunks_v1\n```\n\n---\n\n## 4. Chat project labeling rule\n\n**Locked decision**\n\nProject is assigned by **top-level raw archive directory name**, not by loose inference.\n\nExample:\n\n```text\n/run/media/.../imports/raw/CICS/CICS_Project_Index.txt\n→ project = \"CICS\"\n```\n\n```text\n/run/media/.../imports/raw/Aletheia_Forensis/3a_Quality_Assessment_Engine_PQ-EC.txt\n→ project = \"Aletheia_Forensis\"\n```\n\n### Rule hierarchy\n\n1. top-level directory mapping is authoritative\n2. filename may be stored separately as `source_file`\n3. content/header text is descriptive only and must not override project assignment\n\nThis matches your broader authoritative-vs-descriptive approach.\n\n---\n\n## 5. Conversation-unit generation method\n\n**Locked decision**\n\nPhase 1 uses **deterministic rule-based segmentation only**.\n\nNo LLM-generated segmentation in the authoritative pipeline.\n\n### Unit types\n\nFor chats, create two layers:\n\n1. **message-level normalized records**\n2. **conversation units** built deterministically from message sequences\n\n### Deterministic conversation-unit examples\n\n- consecutive turns on same subtopic\n- explicit hand-off blocks\n- implementation step blocks\n- error/debug sequences\n- decision/acceptance sequences\n\n### LLM use\n\nAny LLM-produced summaries or topic grouping must be treated as:\n\n```text\nadvisory only\nnon-authoritative\n```\n\nand stored separately later if implemented.\n\n---\n\n## 6. Manifest hash scope\n\n**Locked decision**\n\nManifest scope is split by artifact type.\n\n### 6a. Chunk manifest hash\n\nHash over:\n\n```text\nchunk file bytes only\n```\n\nExample:\n\n```text\nblake3(chunks/lua_api.jsonl bytes)\n```\n\n### 6b. Embedding manifest hash\n\nHash over:\n\n- embedding file bytes\n- embedding model identifier\n- embedding config identifier\n\nConceptually:\n\n```text\nblake3(\n  embedding_file_bytes +\n  model_id +\n  model_config\n)\n```\n\n### 6c. Ingestion manifest hash\n\nHash over:\n\n- collection name\n- chunk manifest hash\n- embedding manifest hash\n- vector dimension\n- distance metric\n\nConceptually:\n\n```text\nblake3(\n  collection_name +\n  chunk_manifest_hash +\n  embedding_manifest_hash +\n  vector_size +\n  distance_metric\n)\n```\n\nThis gives a clean determinism envelope for each stage.\n\n---\n\n## 7. Normalized schema versioning\n\n**Locked decision**\n\nIntroduce explicit schema names now.\n\nInitial schema set:\n\n```text\nNormalizedChatMessageSchema_1\nChatChunkSchema_1\nChatUnitSchema_1\nCodingChunkSchema_1\nEmbeddingManifestSchema_1\nChunkManifestSchema_1\nIngestionManifestSchema_1\nRetrievalResultSchema_1\n```\n\n### Rule\n\nAll generated artifacts must declare:\n\n- `schema_name`\n- `schema_version`\n\nExample:\n\n```json\n{\n  \"schema_name\": \"CodingChunkSchema\",\n  \"schema_version\": 1\n}\n```\n\nNo silent format drift.\n\n---\n\n## 8. Retrieval API response shape\n\n**Locked decision**\n\nRetrieval returns a structured object with query metadata plus scored results.\n\n### Canonical response shape\n\n```json\n{\n  \"schema_name\": \"RetrievalResultSchema\",\n  \"schema_version\": 1,\n  \"query\": \"...\",\n  \"collection\": \"chat_chunks_v1\",\n  \"top_k\": 5,\n  \"results\": [\n    {\n      \"chunk_id\": \"blake3:...\",\n      \"score\": 0.82,\n      \"text\": \"...\",\n      \"source_file\": \"...\",\n      \"project\": \"CICS\",\n      \"corpus\": \"chats\",\n      \"doc_type\": \"chat\",\n      \"chunk_index\": 14\n    }\n  ]\n}\n```\n\n### Minimum result fields\n\n```text\nchunk_id\nscore\ntext\nsource_file\ncorpus\nchunk_index\n```\n\nFor chat results, include:\n\n```text\nproject\n```\n\nFor coding results, include:\n\n```text\ndoc_type\nlanguage\n```\n\n---\n\n# Additional locked implementation details\n\n## Embedding manifests\n\nFor each `.npy`, create a paired manifest.\n\nExample:\n\n```text\ncorpora/coding/embeddings/lua_api.npy\ncorpora/coding/manifests/lua_api.embedding_manifest.json\n```\n\nManifest fields:\n\n```json\n{\n  \"schema_name\": \"EmbeddingManifestSchema\",\n  \"schema_version\": 1,\n  \"corpus\": \"coding\",\n  \"source_chunk_file\": \"corpora/coding/chunks/lua_api.jsonl\",\n  \"embedding_file\": \"corpora/coding/embeddings/lua_api.npy\",\n  \"row_count\": 1234,\n  \"vector_dim\": 768,\n  \"model_id\": \"nomic-embed-text\",\n  \"hash_embedding_file\": \"blake3:...\",\n  \"hash_source_chunk_file\": \"blake3:...\"\n}\n```\n\n## Chunk manifests\n\nExample:\n\n```text\ncorpora/coding/manifests/lua_api.chunk_manifest.json\n```\n\nFields:\n\n```json\n{\n  \"schema_name\": \"ChunkManifestSchema\",\n  \"schema_version\": 1,\n  \"corpus\": \"coding\",\n  \"chunk_file\": \"corpora/coding/chunks/lua_api.jsonl\",\n  \"row_count\": 1234,\n  \"hash_chunk_file\": \"blake3:...\"\n}\n```\n\n## Ingestion manifests\n\nExample:\n\n```text\ncorpora/coding/manifests/coding_chunks_v1.ingestion_manifest.json\n```\n\nFields:\n\n```json\n{\n  \"schema_name\": \"IngestionManifestSchema\",\n  \"schema_version\": 1,\n  \"collection\": \"coding_chunks_v1\",\n  \"chunk_manifest_hashes\": [\"blake3:...\"],\n  \"embedding_manifest_hashes\": [\"blake3:...\"],\n  \"vector_dim\": 768,\n  \"distance_metric\": \"Cosine\",\n  \"point_count\": 1234,\n  \"ingestion_mode\": \"drop_and_rebuild\",\n  \"ingestion_hash\": \"blake3:...\"\n}\n```\n\n---\n\n# Final locked rules summary\n\n## Storage mapping\n```text\none .jsonl chunk file ↔ one .npy embedding file\nsame order, one row per line\n```\n\n## Identity\n```text\ncanonical identity = chunk_id\nqdrant point id = sequential operational integer\n```\n\n## Collection behavior\n```text\nPhase 1 = drop and rebuild\n```\n\n## Chat labeling\n```text\nproject = top-level raw archive directory\n```\n\n## Segmentation\n```text\nauthoritative pipeline = deterministic rule-based only\n```\n\n## Determinism\n```text\nseparate manifest hashes for chunking, embeddings, ingestion\n```\n\n## Schemas\n```text\nexplicit schema names and versions required\n```\n\n## Retrieval output\n```text\nstructured response with stable result fields\n```\n\nThese are now sufficient to begin implementation without re-opening core architecture."
+          ]
+        },
+        "create_time": 1773447649.363145,
+        "end_turn": true,
+        "id": "43ab6f71-1ecf-4b80-855c-ff1ed506b91c",
+        "metadata": {
+          "can_save": true,
+          "citations": [],
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "923a541f-1c0e-4489-b7d4-511499a4e327",
+          "request_id": "82892cb3-d97d-450c-ba48-cf92483e9a5c",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "turn_exchange_id": "60afcfd2-743e-456d-9e7a-416b525e6774"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "923a541f-1c0e-4489-b7d4-511499a4e327"
+    },
+    "54d8ffa1-365a-424b-b579-d79280c5aad0": {
+      "children": [
+        "8570b1c4-cb7d-45cc-9a0a-9ee354700316"
+      ],
+      "id": "54d8ffa1-365a-424b-b579-d79280c5aad0",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content": "Thought for a couple of seconds",
+          "content_type": "reasoning_recap"
+        },
+        "create_time": 1775396078.13204,
+        "end_turn": false,
+        "id": "54d8ffa1-365a-424b-b579-d79280c5aad0",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "finished_duration_sec": 2,
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "e9c96ab6-412e-4325-a4d2-37e10af52928",
+          "reasoning_end_time": 1775396078.0716615,
+          "reasoning_start_time": 1775396076.0601623,
+          "reasoning_status": "reasoning_ended",
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "search_result_groups": [],
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "e9c96ab6-412e-4325-a4d2-37e10af52928"
+    },
+    "6755aaba-fd7b-470c-85ed-6b6eee4f5b34": {
+      "children": [
+        "e9c96ab6-412e-4325-a4d2-37e10af52928"
+      ],
+      "id": "6755aaba-fd7b-470c-85ed-6b6eee4f5b34",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "model_editable_context",
+          "model_set_context": "",
+          "repo_summary": null,
+          "repository": null,
+          "structured_context": null
+        },
+        "create_time": 1775396076.2495494,
+        "end_turn": null,
+        "id": "6755aaba-fd7b-470c-85ed-6b6eee4f5b34",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "a2e7b7ea-e8be-4a29-8cca-04af25146cb1",
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "search_result_groups": [],
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "e80d6d68-8083-4bc9-9972-73399d5fc8a8"
+    },
+    "723c5ea2-2853-49f4-9929-736a898f141a": {
+      "children": [
+        "e4304592-82b2-4c89-8614-731c11ba681a"
+      ],
+      "id": "723c5ea2-2853-49f4-9929-736a898f141a",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": "final",
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "Your list is good. Those are the exact gaps that normally break a RAG implementation later. I will answer them now so the **next chat can proceed without architectural ambiguity**. These answers are consistent with the design principles you’ve been using across projects (determinism, reproducibility, auditability).\n\n---\n\n# CICS — RAG Pipeline Design Clarifications\n\nThese decisions apply to **both corpora**:\n\n```\ncoding\nchats\n```\n\nbut chat normalization has additional rules.\n\n---\n\n# 1. Chunk File Format\n\n**Decision**\n\nUse **JSONL (JSON Lines)**.\n\nEach line = one chunk object.\n\nExample:\n\n```json\n{\"chunk_id\":\"blake3:2f93...\",\"text\":\"...\",\"source_file\":\"lua_api/file1.md\",\"chunk_index\":0,\"start_line\":0,\"end_line\":38,\"metadata\":{\"doc_type\":\"lua_api\",\"language\":\"lua\"}}\n{\"chunk_id\":\"blake3:8af1...\",\"text\":\"...\",\"source_file\":\"lua_api/file1.md\",\"chunk_index\":1,\"start_line\":39,\"end_line\":80,\"metadata\":{\"doc_type\":\"lua_api\",\"language\":\"lua\"}}\n```\n\n**File example**\n\n```\nchunks/lua_api.jsonl\nchunks/python_docs.jsonl\n```\n\n**Why JSONL**\n\n- append-friendly\n- streaming ingestion\n- minimal filesystem overhead\n- simple batch loading\n- widely used for ML pipelines\n\n---\n\n# 2. Chunk Storage Layout\n\nDirectory structure:\n\n```\ncorpora/\n  coding/\n    chunks/\n      lua_api.jsonl\n      python_docs.jsonl\n      system_docs.jsonl\n```\n\nFor chats later:\n\n```\ncorpora/\n  chats/\n    chunks/\n      Aletheia_Forensis.jsonl\n      CICS.jsonl\n      ALIP.jsonl\n```\n\n**Why**\n\n- avoids millions of small files\n- enables sequential disk streaming\n- simplifies ingestion\n\n---\n\n# 3. Metadata Schema\n\nMinimum schema:\n\n```json\n{\n  \"chunk_id\": \"blake3:...\",\n  \"text\": \"...\",\n  \"source_file\": \"...\",\n  \"chunk_index\": 0,\n  \"start_line\": 0,\n  \"end_line\": 40,\n  \"metadata\": {\n    \"corpus\": \"coding\",\n    \"doc_type\": \"lua_api\",\n    \"language\": \"lua\",\n    \"repo\": \"docs\",\n    \"section\": \"events\"\n  }\n}\n```\n\nRequired fields:\n\n```\nchunk_id\ntext\nsource_file\nchunk_index\nstart_line\nend_line\nmetadata\n```\n\nThe metadata object is flexible.\n\n---\n\n# 4. Deterministic Chunk IDs\n\nChunk IDs must be deterministic.\n\n**Decision**\n\n```\nchunk_id = blake3(source_file + chunk_index + text)\n```\n\nExample:\n\n```\nblake3:8af13c92...\n```\n\n**Why**\n\n- deterministic ingestion\n- reproducible pipelines\n- easy deduplication\n- stable references\n\nIncremental IDs are **not acceptable**.\n\n---\n\n# 5. Qdrant Payload Schema\n\nPayload stored alongside vectors:\n\n```json\n{\n  \"chunk_id\": \"blake3:...\",\n  \"text\": \"...\",\n  \"source_file\": \"lua_api/file1.md\",\n  \"chunk_index\": 0,\n  \"corpus\": \"coding\",\n  \"doc_type\": \"lua_api\",\n  \"language\": \"lua\"\n}\n```\n\nMinimum payload fields:\n\n```\nchunk_id\ntext\nsource_file\nchunk_index\ncorpus\ndoc_type\n```\n\nThese fields allow filtering such as:\n\n```\ncorpus = coding\ndoc_type = python_docs\n```\n\n---\n\n# 6. Embedding Batch Size\n\nThe XPS is **CPU-only**.\n\nRecommended batch sizes for `nomic-embed-text`:\n\n```\nbatch_size = 32\n```\n\nFallback:\n\n```\nbatch_size = 16\n```\n\nAvoid:\n\n```\n64+\n```\n\nCPU memory becomes inefficient beyond that.\n\n---\n\n# 7. Embedding Storage Strategy\n\n**Decision**\n\nUse **Strategy A (persist embeddings)**.\n\nPipeline:\n\n```\nchunks\n   ↓\nembeddings (saved)\n   ↓\nQdrant ingestion\n```\n\nDirectory:\n\n```\ncorpora/coding/embeddings\n```\n\nEmbeddings stored as:\n\n```\n.npy files\nor\nJSONL with vectors\n```\n\nRecommended format:\n\n```\nembeddings/*.npy\n```\n\nWhy:\n\n- restartable pipeline\n- deterministic ingestion\n- avoids recomputation\n\n---\n\n# 8. Coding Dataset Size (Estimate)\n\nFrom previous discussion:\n\nTypical size range:\n\n```\nfiles: 200 – 2000\ntext size: 50MB – 500MB\nchunks: 10k – 100k\n```\n\nEmbedding runtime estimate (CPU):\n\n```\n10k chunks ≈ 5–15 minutes\n100k chunks ≈ 1–2 hours\n```\n\nThis is manageable on the XPS.\n\n---\n\n# 9. Retrieval Validation Strategy\n\nUse **three-stage validation**.\n\n### Stage 1 — Smoke Test\n\nExample query:\n\n```\nlua register event\n```\n\nExpect Lua API chunks.\n\n---\n\n### Stage 2 — Targeted Queries\n\nExamples:\n\n```\npython async event loop\nfilesystem permissions linux\nlua event frame wow api\n```\n\nCheck if correct docs appear.\n\n---\n\n### Stage 3 — Cross-document retrieval\n\nTest that results come from multiple sources.\n\n---\n\n# 10. Chat Normalization Rules\n\nRaw chats:\n\n```\nimports/raw\n```\n\nNormalized chats:\n\n```\nimports/normalized\n```\n\nNormalization output format:\n\n```json\n{\n \"chat_id\": \"...\",\n \"message_index\": 34,\n \"role\": \"user\",\n \"content\": \"...\",\n \"project\": \"CICS\"\n}\n```\n\nRules:\n\n| Element | Handling |\n|------|------|\n| System messages | preserved |\n| User messages | preserved |\n| Assistant messages | preserved |\n| Code blocks | preserved exactly |\n| Markdown | preserved |\n| timestamps | ignored |\n| formatting | normalized whitespace |\n\nChunking occurs **after normalization**.\n\n---\n\n# Final Architecture Summary\n\nChunk format\n\n```\nJSONL\n```\n\nChunk IDs\n\n```\nblake3 deterministic\n```\n\nEmbeddings\n\n```\nstored locally first\n```\n\nVector database\n\n```\nQdrant collections\n```\n\nCollections\n\n```\ncoding_chunks_v1\nchat_chunks_v1\n```\n\nBatch size\n\n```\n32\n```\n\nNormalization\n\n```\nstructured message objects\n```\n\n---\n\n# One Important Improvement (Recommended)\n\nAdd this directory to the project:\n\n```\ncorpora/*/manifests\n```\n\nExample:\n\n```\ncorpora/coding/manifests/chunk_manifest.json\n```\n\nManifest records:\n\n```\nfile\nchunk_count\nhash\ngeneration_timestamp\n```\n\nThis gives **reproducible ingestion**.\n\n---\n\nIf you'd like, I can also give you the **cleanest possible architecture diagram for the entire CICS RAG pipeline** so the new chat never drifts or re-debates these decisions."
+          ]
+        },
+        "create_time": 1773447431.977246,
+        "end_turn": true,
+        "id": "723c5ea2-2853-49f4-9929-736a898f141a",
+        "metadata": {
+          "can_save": true,
+          "citations": [],
+          "code_blocks": {
+            "0": {
+              "edited": false,
+              "id": "gtsvyw",
+              "preview_language": null,
+              "previewable": false
+            },
+            "1": {
+              "edited": false,
+              "id": "viokog",
+              "preview_language": null,
+              "previewable": false
+            },
+            "2": {
+              "edited": false,
+              "id": "cpsyi2",
+              "preview_language": null,
+              "previewable": false
+            },
+            "3": {
+              "edited": false,
+              "id": "mxpwvw",
+              "preview_language": null,
+              "previewable": false
+            },
+            "4": {
+              "edited": false,
+              "id": "w6vh2b",
+              "preview_language": null,
+              "previewable": false
+            },
+            "5": {
+              "edited": false,
+              "id": "wibc0h",
+              "preview_language": null,
+              "previewable": false
+            },
+            "6": {
+              "edited": false,
+              "id": "0kjsdv",
+              "preview_language": null,
+              "previewable": false
+            },
+            "7": {
+              "edited": false,
+              "id": "iyp40i",
+              "preview_language": null,
+              "previewable": false
+            },
+            "8": {
+              "edited": false,
+              "id": "l2rks7",
+              "preview_language": null,
+              "previewable": false
+            },
+            "9": {
+              "edited": false,
+              "id": "wh4nc0",
+              "preview_language": null,
+              "previewable": false
+            },
+            "10": {
+              "edited": false,
+              "id": "83b781",
+              "preview_language": null,
+              "previewable": false
+            },
+            "11": {
+              "edited": false,
+              "id": "52tmeu",
+              "preview_language": null,
+              "previewable": false
+            },
+            "12": {
+              "edited": false,
+              "id": "3na0g0",
+              "preview_language": null,
+              "previewable": false
+            },
+            "13": {
+              "edited": false,
+              "id": "qj3qn3",
+              "preview_language": null,
+              "previewable": false
+            },
+            "14": {
+              "edited": false,
+              "id": "d7lq4r",
+              "preview_language": null,
+              "previewable": false
+            },
+            "15": {
+              "edited": false,
+              "id": "q8b952",
+              "preview_language": null,
+              "previewable": false
+            },
+            "16": {
+              "edited": false,
+              "id": "8p3wh3",
+              "preview_language": null,
+              "previewable": false
+            },
+            "17": {
+              "edited": false,
+              "id": "nyze80",
+              "preview_language": null,
+              "previewable": false
+            },
+            "18": {
+              "edited": false,
+              "id": "j8v62m",
+              "preview_language": null,
+              "previewable": false
+            },
+            "19": {
+              "edited": false,
+              "id": "5rf0dq",
+              "preview_language": null,
+              "previewable": false
+            },
+            "20": {
+              "edited": false,
+              "id": "o153c1",
+              "preview_language": null,
+              "previewable": false
+            },
+            "21": {
+              "edited": false,
+              "id": "49g5m5",
+              "preview_language": null,
+              "previewable": false
+            },
+            "22": {
+              "edited": false,
+              "id": "hvt4mi",
+              "preview_language": null,
+              "previewable": false
+            },
+            "23": {
+              "edited": false,
+              "id": "bst87i",
+              "preview_language": null,
+              "previewable": false
+            },
+            "24": {
+              "edited": false,
+              "id": "7v0nl4",
+              "preview_language": null,
+              "previewable": false
+            },
+            "25": {
+              "edited": false,
+              "id": "7bq8v2",
+              "preview_language": null,
+              "previewable": false
+            },
+            "26": {
+              "edited": false,
+              "id": "z7bl0j",
+              "preview_language": null,
+              "previewable": false
+            },
+            "27": {
+              "edited": false,
+              "id": "o4ew6g",
+              "preview_language": null,
+              "previewable": false
+            },
+            "28": {
+              "edited": false,
+              "id": "l16f9l",
+              "preview_language": null,
+              "previewable": false
+            },
+            "29": {
+              "edited": false,
+              "id": "qi6m7x",
+              "preview_language": null,
+              "previewable": false
+            },
+            "30": {
+              "edited": false,
+              "id": "rz1l6q",
+              "preview_language": null,
+              "previewable": false
+            },
+            "31": {
+              "edited": false,
+              "id": "u8d1pp",
+              "preview_language": null,
+              "previewable": false
+            },
+            "32": {
+              "edited": false,
+              "id": "5pvvjz",
+              "preview_language": null,
+              "previewable": false
+            },
+            "33": {
+              "edited": false,
+              "id": "nf4ym3",
+              "preview_language": null,
+              "previewable": false
+            },
+            "34": {
+              "edited": false,
+              "id": "i1tp1q",
+              "preview_language": null,
+              "previewable": false
+            },
+            "35": {
+              "edited": false,
+              "id": "fbqni8",
+              "preview_language": null,
+              "previewable": false
+            }
+          },
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "finish_details": {
+            "stop_tokens": [
+              200002
+            ],
+            "type": "stop"
+          },
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "is_complete": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "e0b83be4-2d61-4e06-ab0e-064c58dd1310",
+          "request_id": "4298b0de-ff64-4d64-8d58-0d49bfe4c6d4",
+          "resolved_model_slug": "gpt-5-3",
+          "search_result_groups": [],
+          "turn_exchange_id": "c27d66c4-2e0d-474e-99ee-5fbb0df1076e"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "e0b83be4-2d61-4e06-ab0e-064c58dd1310"
+    },
+    "84e9f3a3-5cff-4d75-978d-309a7baa7af0": {
+      "children": [
+        "34fbe744-cc04-41df-a5e7-26787568ef08"
+      ],
+      "id": "84e9f3a3-5cff-4d75-978d-309a7baa7af0",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "system"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ""
+          ]
+        },
+        "create_time": 1773447264.044395,
+        "end_turn": true,
+        "id": "84e9f3a3-5cff-4d75-978d-309a7baa7af0",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "is_visually_hidden_from_conversation": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "parent_id": "1f3c3a4e-9baa-4a58-9c67-17b2f5866e84",
+          "rebase_developer_message": true,
+          "request_id": "2e183db8-0d1b-43bc-abcf-12505b28246a",
+          "turn_exchange_id": "15ca2bcf-6066-4f42-857a-a32127088ba9"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 0
+      },
+      "parent": "1f3c3a4e-9baa-4a58-9c67-17b2f5866e84"
+    },
+    "8570b1c4-cb7d-45cc-9a0a-9ee354700316": {
+      "children": [
+        "fe05f1c3-b9c3-427a-b8e6-e83950cf0d09"
+      ],
+      "id": "8570b1c4-cb7d-45cc-9a0a-9ee354700316",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": "final",
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "These should be locked. Here is the specification.\n\n# CICS — Corpus Governance Clarifications (Locked)\n\n## 1. Raw Archive Authority Boundary\n\n**Locked decision**\n\n`imports/raw` is **immutable by governance rule**, and should also be **protected operationally when practical**.\n\n### Authoritative rule\n\nFiles under:\n\n```text\nimports/raw\n```\n\nmust never be modified in place once created.\n\n### Enforcement model\n\nPhase 1 authority boundary is:\n\n1. **governance rule is mandatory**\n2. **filesystem read-only protection is recommended**\n3. lack of read-only permissions does **not** make mutation acceptable\n\n### Practical interpretation\n\n- immutability is not merely a suggestion\n- it is an architectural invariant\n- filesystem permissions are a defensive control, not the source of truth\n\n### Recommended implementation\n\nWhen Phase 1A is complete and the corpus is frozen:\n\n- generate the raw manifest\n- then set the raw archive tree to read-only\n\nExample operational posture:\n\n```text\nraw archive = authoritative source evidence\nnormalized/chunks/embeddings = derived artifacts\n```\n\nSo:\n\n- **immutability is hard policy**\n- **read-only permissions are strongly recommended after freeze**\n\n---\n\n## 2. Chat Identity Definition\n\n**Locked decision**\n\nCanonical `chat_id` is derived from the **project path plus filename**, not from file contents alone.\n\n### Rule\n\n```text\nchat_id = blake3(project + \"/\" + filename)\n```\n\nExample:\n\n```text\nproject = \"CICS\"\nfilename = \"CICS_Project_Index.txt\"\nchat_id = blake3(\"CICS/CICS_Project_Index.txt\")\n```\n\n### Why this is the correct identity\n\nUsing file-content hash as `chat_id` would cause identity drift if:\n\n- export formatting changes\n- whitespace changes\n- corrected exports are made later\n\nUsing filename alone is too weak because names may repeat across projects.\n\nUsing project path + filename gives:\n\n- stable identity\n- deterministic identity\n- directory-aware identity\n- no dependence on later normalization details\n\n### Important distinction\n\nTwo different identifiers should exist:\n\n#### Canonical chat identity\n```text\nchat_id = blake3(project + \"/\" + filename)\n```\n\n#### Raw file content fingerprint\n```text\nraw_file_hash = blake3(file bytes)\n```\n\n`chat_id` identifies the logical chat artifact.  \n`raw_file_hash` identifies the exact exported file bytes.\n\nBoth should be preserved.\n\n---\n\n## 3. Project Classification Authority\n\n**Locked decision**\n\nTop-level raw archive directory name is the **only authoritative source** for `project`.\n\n### Rule\n\nProject assignment may **not** be overridden by:\n\n- filename wording\n- chat contents\n- header text\n- inferred topic\n- LLM classification\n\nExample:\n\n```text\nimports/raw/Aletheia_Forensis/3a_Quality_Assessment_Engine_PQ-EC.txt\n→ project = \"Aletheia_Forensis\"\n```\n\nEven if the contents mention another project, that does not override classification.\n\n### Governance interpretation\n\n- directory structure = authoritative\n- content labels = descriptive only\n\nThis matches your broader rule set about authoritative vs descriptive data.\n\n---\n\n## 4. Corpus Completion Criteria (Hard vs Soft)\n\n**Locked decision**\n\nPhase 1A completion requires **both**:\n\n1. user declaration that import is complete\n2. manifest snapshot generation\n\n### Therefore completion is not just conversational\n\nUser declaration alone is **necessary but not sufficient**.\n\n### Phase 1A hard stop criteria\n\nTo declare corpus acquisition complete:\n\n1. user states no further imports are intended for the current freeze\n2. raw archive file set is considered final for this phase\n3. a cryptographic raw manifest is generated\n4. the corpus is marked frozen\n\nOnly then is Phase 1A complete.\n\n### Why\n\nWithout the manifest, the corpus is not auditable or reproducible.\n\n---\n\n## 5. Excluded Chat Policy Formalization\n\n**Locked decision**\n\nExcluded low-signal chats are **out of scope for the current freeze**, but **not permanently forbidden**.\n\n### Rule\n\nExcluded chats may be reintroduced later if the user determines they contain useful reasoning signal.\n\nThey are not destroyed conceptually. They are simply omitted from the current corpus boundary.\n\n### Policy status\n\nFor the current phase:\n\n```text\nexcluded = not imported\n```\n\nFor future phases:\n\n```text\nexcluded chats may be added through a new controlled import event\n```\n\n### Required behavior if reintroduced later\n\nIf previously excluded chats are imported later, that must be treated as:\n\n- a corpus change event\n- a new manifest state\n- a new freeze boundary\n\nSo they are allowed later, but not silently.\n\n---\n\n## 6. Corpus Snapshot Requirement\n\n**Locked decision**\n\nA cryptographic manifest is **required** before Phase 1A can be declared complete.\n\nThis is mandatory, not optional.\n\n### Required artifact\n\nExample:\n\n```text\nimports/raw_manifest_v1.json\n```\n\n### Minimum manifest fields\n\nFor each file:\n\n```json\n{\n  \"project\": \"CICS\",\n  \"filename\": \"CICS_Project_Index.txt\",\n  \"relative_path\": \"CICS/CICS_Project_Index.txt\",\n  \"chat_id\": \"blake3:...\",\n  \"raw_file_hash\": \"blake3:...\",\n  \"size_bytes\": 12345\n}\n```\n\n### Manifest purpose\n\nThe manifest is the cryptographic snapshot that defines:\n\n- exact corpus membership\n- exact file state\n- exact freeze boundary\n\nWithout it, the archive is only “apparently complete,” not formally frozen.\n\n---\n\n# Final locked summary\n\n## Raw archive immutability\n```text\nhard governance rule\nread-only filesystem protection recommended after freeze\n```\n\n## Chat identity\n```text\nchat_id = blake3(project + \"/\" + filename)\nraw_file_hash = blake3(file bytes)\n```\n\n## Project assignment\n```text\ntop-level raw archive directory only\nno override from content\n```\n\n## Phase 1A completion\n```text\nuser declaration + manifest snapshot required\n```\n\n## Excluded chats\n```text\nout of scope for current freeze\nmay be imported later as a new corpus change event\n```\n\n## Corpus snapshot\n```text\ncryptographic manifest required before completion\n```\n\nThese decisions close the remaining governance gaps around corpus authority and freeze-state control."
+          ]
+        },
+        "create_time": 1775396076.246357,
+        "end_turn": true,
+        "id": "8570b1c4-cb7d-45cc-9a0a-9ee354700316",
+        "metadata": {
+          "can_save": true,
+          "citations": [],
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "54d8ffa1-365a-424b-b579-d79280c5aad0",
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "54d8ffa1-365a-424b-b579-d79280c5aad0"
+    },
+    "8e8894f2-c6bd-4ee4-a820-a4a9b33bd8f3": {
+      "children": [
+        "b2e2fc5e-dd81-43fa-9041-310a39b5712d"
+      ],
+      "id": "8e8894f2-c6bd-4ee4-a820-a4a9b33bd8f3",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "system"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ""
+          ]
+        },
+        "create_time": 1775396615.2171907,
+        "end_turn": true,
+        "id": "8e8894f2-c6bd-4ee4-a820-a4a9b33bd8f3",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "is_visually_hidden_from_conversation": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "parent_id": "fe05f1c3-b9c3-427a-b8e6-e83950cf0d09",
+          "rebase_developer_message": true,
+          "request_id": "f7386500-b098-4bf7-9c8d-b215bc61a342",
+          "turn_exchange_id": "4a011336-7c15-40d3-bf7e-dc715a4daaf2"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 0
+      },
+      "parent": "fe05f1c3-b9c3-427a-b8e6-e83950cf0d09"
+    },
+    "905bbfa2-e4d3-476a-9494-1d8bbc7db077": {
+      "children": [
+        "e0b83be4-2d61-4e06-ab0e-064c58dd1310"
+      ],
+      "id": "905bbfa2-e4d3-476a-9494-1d8bbc7db077",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": "final",
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ":::writing{variant=\"standard\" id=\"10421\"}\n# CICS — RAG Node Continuation Hand-Off\n\nPROJECT: CICS — Chat Intelligence & Continuity System  \nPORTFOLIO: UMB  \nCHAT ROLE: Infrastructure / RAG Node Setup  \nSTATUS: CONTINUATION REQUIRED\n\n---\n\n# 1. Purpose of This Chat\n\nThis session prepared the **XPS-13-9360** as the dedicated **RAG ingestion and vector node** for the CICS system after installing a **fresh OS on the MP600 2TB NVMe**.\n\nThe goal of the work completed in this chat was to:\n\n1. Establish the working directory layout for the RAG node.\n2. Install container infrastructure.\n3. Deploy Qdrant as the vector database.\n4. Prepare the machine for large embedding workloads.\n\nNo chat corpus processing has begun.\n\n---\n\n# 2. Hardware Role Confirmation\n\n| Machine | Role |\n|---|---|\n| Steam Deck | Local AI interaction node |\n| XPS-13-9360 | RAG ingestion + vector database node |\n| Future RTX 3090 workstation | Heavy inference / advanced analysis |\n\nThe XPS will host:\n\n- embedding generation\n- chunk ingestion\n- vector database (Qdrant)\n- retrieval API\n\n---\n\n# 3. Storage Architecture\n\nInternal drive (MP600 NVMe):\n\n```\n/home/kimberly/cics\n```\n\nPurpose:\n\n- active RAG working directory\n- embeddings\n- chunk storage\n- vector database storage\n- manifests\n- logs\n- tools\n\nExternal drive (WDBlack):\n\n```\n/run/media/kimberly/WDBlack/cics/imports/raw\n```\n\nPurpose:\n\n- **immutable raw chat archive**\n- treated as forensic source data\n- must never be modified\n\nThe raw archive currently contains:\n\n```\n14 directories\n77 chat files\n```\n\n---\n\n# 4. Directory Structure Created\n\nWorking directory on the XPS:\n\n```\n/home/kimberly/cics\n```\n\nCurrent layout:\n\n```\n/home/kimberly/cics\n│\n├── corpora\n│   ├── chats\n│   │   ├── chunks\n│   │   ├── embeddings\n│   │   └── retrieval\n│   │\n│   └── coding\n│       ├── sources\n│       ├── chunks\n│       ├── embeddings\n│       └── metadata\n│\n├── vector_store\n│   ├── chats\n│   └── coding\n│\n├── manifests\n├── schemas\n├── logs\n├── tools\n└── runtime\n```\n\nThe **chat corpus pipeline is not active yet**.\n\n---\n\n# 5. Docker Installation\n\nDocker was installed on the XPS to run infrastructure services.\n\nValidation performed:\n\n```\ndocker --version\ndocker run hello-world\n```\n\nDocker service enabled.\n\n---\n\n# 6. Qdrant Deployment\n\nQdrant was deployed as a Docker container.\n\nCommand used:\n\n```\ndocker run -d \\\n  --name qdrant \\\n  -p 6333:6333 \\\n  -p 6334:6334 \\\n  -v /home/kimberly/cics/vector_store/qdrant:/qdrant/storage \\\n  --restart unless-stopped \\\n  qdrant/qdrant\n```\n\nContainer successfully pulled and started.\n\nPersistent storage directory:\n\n```\n/home/kimberly/cics/vector_store/qdrant\n```\n\nPorts exposed:\n\n```\n6333 REST API\n6334 gRPC\n```\n\nThe vector database is now operational.\n\n---\n\n# 7. System Limits Adjustment\n\nThe system open-file descriptor limit was raised to support large ingestion workloads.\n\nFile edited:\n\n```\n/etc/security/limits.conf\n```\n\nLines added:\n\n```\n* soft nofile 65535\n* hard nofile 65535\n```\n\nVerification confirmed the lines exist.\n\nThe limit will apply after a new login session or reboot.\n\n---\n\n# 8. Python Environment Preparation\n\nPlanned Python environment location:\n\n```\n/home/kimberly/cics/.venv\n```\n\nThis environment will host:\n\n- embedding pipeline\n- ingestion scripts\n- Qdrant client\n- retrieval utilities\n\nInstallation of packages is deferred to the next session.\n\n---\n\n# 9. Coding RAG Dataset Plan\n\nBefore embedding the chat corpus, the system will restore and re-embed an existing **coding documentation dataset**.\n\nPurpose:\n\n- validate embedding pipeline\n- validate Qdrant indexing\n- validate retrieval queries\n\nThe coding dataset will live in:\n\n```\n/home/kimberly/cics/corpora/coding\n```\n\nStructure:\n\n```\nsources\nchunks\nembeddings\nmetadata\n```\n\nVector collection name planned:\n\n```\ncoding_chunks_v1\n```\n\n---\n\n# 10. Chat Corpus Status\n\nThe chat corpus pipeline has **not begun yet**.\n\nCurrent archive:\n\n```\n/run/media/kimberly/WDBlack/cics/imports/raw\n```\n\nStatus:\n\n```\n14 directories\n77 chat files\n```\n\nChat ingestion must complete before:\n\n```\nnormalization\nchunking\nembedding\nvector indexing\n```\n\nbegin.\n\n---\n\n# 11. Technology Decisions (Locked)\n\nEmbedding model:\n\n```\nnomic-embed-text\n```\n\nVector database:\n\n```\nQdrant\n```\n\nChunking approach:\n\n```\nsemantic chunking with structural boundary preservation\n```\n\n---\n\n# 12. Current System State\n\nThe XPS node now has:\n\n| Component | Status |\n|---|---|\n| Fresh OS install | complete |\n| MP600 NVMe working disk | active |\n| CICS directory structure | created |\n| Docker | installed |\n| Qdrant | running |\n| vector storage mount | configured |\n| system file-descriptor limits | configured |\n\nThe node is now ready to begin **coding corpus ingestion testing**.\n\n---\n\n# 13. Immediate Next Tasks\n\nThe continuation chat should perform the following:\n\n1. Verify Qdrant API connectivity.\n2. Create the Python virtual environment.\n3. Install embedding and ingestion dependencies.\n4. Restore the coding documentation corpus.\n5. Restart the coding embedding pipeline.\n6. Insert vectors into Qdrant.\n7. Validate retrieval queries.\n\nThe chat corpus will remain untouched until Phase-1A ingestion completes.\n\n---\n\n# 14. Continuation Instruction\n\nThe next chat should begin with:\n\n```\nCICS RAG Node — Coding Corpus Restoration\n```\n\nand continue infrastructure validation before processing the chat dataset.\n\n---\n\nEND OF HAND-OFF\n:::"
+          ]
+        },
+        "create_time": 1773447264.252893,
+        "end_turn": true,
+        "id": "905bbfa2-e4d3-476a-9494-1d8bbc7db077",
+        "metadata": {
+          "can_save": true,
+          "citations": [],
+          "code_blocks": {
+            "0": {
+              "edited": false,
+              "id": "2nb9ls",
+              "preview_language": null,
+              "previewable": false
+            },
+            "1": {
+              "edited": false,
+              "id": "4r0pa3",
+              "preview_language": null,
+              "previewable": false
+            },
+            "2": {
+              "edited": false,
+              "id": "ao1ycy",
+              "preview_language": null,
+              "previewable": false
+            },
+            "3": {
+              "edited": false,
+              "id": "6metv0",
+              "preview_language": null,
+              "previewable": false
+            },
+            "4": {
+              "edited": false,
+              "id": "wd36wy",
+              "preview_language": null,
+              "previewable": false
+            },
+            "5": {
+              "edited": false,
+              "id": "5dszid",
+              "preview_language": null,
+              "previewable": false
+            },
+            "6": {
+              "edited": false,
+              "id": "btuz3a",
+              "preview_language": null,
+              "previewable": false
+            },
+            "7": {
+              "edited": false,
+              "id": "vd5fkp",
+              "preview_language": null,
+              "previewable": false
+            },
+            "8": {
+              "edited": false,
+              "id": "jqg3qz",
+              "preview_language": null,
+              "previewable": false
+            },
+            "9": {
+              "edited": false,
+              "id": "gjiusl",
+              "preview_language": null,
+              "previewable": false
+            },
+            "10": {
+              "edited": false,
+              "id": "ws1rp0",
+              "preview_language": null,
+              "previewable": false
+            },
+            "11": {
+              "edited": false,
+              "id": "o3txg0",
+              "preview_language": null,
+              "previewable": false
+            },
+            "12": {
+              "edited": false,
+              "id": "k23c23",
+              "preview_language": null,
+              "previewable": false
+            },
+            "13": {
+              "edited": false,
+              "id": "gjxa80",
+              "preview_language": null,
+              "previewable": false
+            },
+            "14": {
+              "edited": false,
+              "id": "0lrg36",
+              "preview_language": null,
+              "previewable": false
+            },
+            "15": {
+              "edited": false,
+              "id": "b1c2eg",
+              "preview_language": null,
+              "previewable": false
+            },
+            "16": {
+              "edited": false,
+              "id": "5f147v",
+              "preview_language": null,
+              "previewable": false
+            },
+            "17": {
+              "edited": false,
+              "id": "kpypv1",
+              "preview_language": null,
+              "previewable": false
+            },
+            "18": {
+              "edited": false,
+              "id": "xy2tq8",
+              "preview_language": null,
+              "previewable": false
+            },
+            "19": {
+              "edited": false,
+              "id": "v6184p",
+              "preview_language": null,
+              "previewable": false
+            },
+            "20": {
+              "edited": false,
+              "id": "j7vk3j",
+              "preview_language": null,
+              "previewable": false
+            },
+            "21": {
+              "edited": false,
+              "id": "dcj8ti",
+              "preview_language": null,
+              "previewable": false
+            }
+          },
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "finish_details": {
+            "stop_tokens": [
+              200002
+            ],
+            "type": "stop"
+          },
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "is_complete": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "34fbe744-cc04-41df-a5e7-26787568ef08",
+          "request_id": "2e183db8-0d1b-43bc-abcf-12505b28246a",
+          "resolved_model_slug": "gpt-5-3",
+          "search_result_groups": [],
+          "turn_exchange_id": "15ca2bcf-6066-4f42-857a-a32127088ba9"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "34fbe744-cc04-41df-a5e7-26787568ef08"
+    },
+    "923a541f-1c0e-4489-b7d4-511499a4e327": {
+      "children": [
+        "43ab6f71-1ecf-4b80-855c-ff1ed506b91c"
+      ],
+      "id": "923a541f-1c0e-4489-b7d4-511499a4e327",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content": "Thought for a couple of seconds",
+          "content_type": "reasoning_recap"
+        },
+        "create_time": 1773447650.857793,
+        "end_turn": false,
+        "id": "923a541f-1c0e-4489-b7d4-511499a4e327",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "finished_duration_sec": 1,
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "fd4cd8b1-ea33-4005-9322-713af0eceef0",
+          "reasoning_end_time": 1773447650.8518314,
+          "reasoning_start_time": 1773447649.4990277,
+          "reasoning_status": "reasoning_ended",
+          "request_id": "82892cb3-d97d-450c-ba48-cf92483e9a5c",
+          "search_result_groups": [],
+          "turn_exchange_id": "60afcfd2-743e-456d-9e7a-416b525e6774"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "fd4cd8b1-ea33-4005-9322-713af0eceef0"
+    },
+    "b2e2fc5e-dd81-43fa-9041-310a39b5712d": {
+      "children": [
+        "e40420b1-fcd4-4242-aa2a-111bb6d9ff51"
+      ],
+      "id": "b2e2fc5e-dd81-43fa-9041-310a39b5712d",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "thoughts",
+          "source_analysis_msg_id": "c9bcaa39-856d-4903-a22f-0326355d41cd",
+          "thoughts": []
+        },
+        "create_time": 1775396618.033121,
+        "end_turn": false,
+        "id": "b2e2fc5e-dd81-43fa-9041-310a39b5712d",
+        "metadata": {
+          "can_save": false,
+          "citations": [],
+          "classifier_response": "default",
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "c9bcaa39-856d-4903-a22f-0326355d41cd",
+          "reasoning_start_time": 1775396615.1979997,
+          "reasoning_status": "is_reasoning",
+          "request_id": "f7386500-b098-4bf7-9c8d-b215bc61a342",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "skip_reasoning_title": "Skip",
+          "turn_exchange_id": "4a011336-7c15-40d3-bf7e-dc715a4daaf2"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "8e8894f2-c6bd-4ee4-a820-a4a9b33bd8f3"
+    },
+    "c349dd5c-51a9-4772-b1f3-afea7888f5a3": {
+      "children": [
+        "1f3c3a4e-9baa-4a58-9c67-17b2f5866e84"
+      ],
+      "id": "c349dd5c-51a9-4772-b1f3-afea7888f5a3",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "user"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "ok, this chat is degrading. can you please give me a clean hand-off of everything we did in this chat, and the state. and I'll start a new continuation chat."
+          ]
+        },
+        "create_time": 1773447263.684,
+        "end_turn": null,
+        "id": "c349dd5c-51a9-4772-b1f3-afea7888f5a3",
+        "metadata": {
+          "can_save": false,
+          "developer_mode_connector_ids": [],
+          "message_source": null,
+          "parent_id": "b32c1d66-a8ac-4c25-bf2f-fee8b04a9244",
+          "request_id": "2e183db8-0d1b-43bc-abcf-12505b28246a",
+          "resolved_model_slug": "gpt-5-3",
+          "selected_github_repos": [],
+          "selected_sources": [],
+          "serialization_metadata": {
+            "custom_symbol_offsets": []
+          },
+          "turn_exchange_id": "15ca2bcf-6066-4f42-857a-a32127088ba9"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "paginated-root:69b2470e-8fdc-832e-800f-c0f8c7130db8"
+    },
+    "e0b83be4-2d61-4e06-ab0e-064c58dd1310": {
+      "children": [
+        "723c5ea2-2853-49f4-9929-736a898f141a"
+      ],
+      "id": "e0b83be4-2d61-4e06-ab0e-064c58dd1310",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "user"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "1. Chunk File Format (Critical)\n\nThe hand-off states that chunking will produce data in:\n\ncorpora/chats/chunks\ncorpora/coding/chunks\n\nBut the actual chunk format is unspecified.\n\nThe next chat must clarify:\n\nQuestion\n\nWhat does a chunk file look like?\n\nPossible formats:\n\nOption A — JSON\n\n{\n  \"chunk_id\": \"...\",\n  \"text\": \"...\",\n  \"source_file\": \"...\",\n  \"start_line\": 0,\n  \"end_line\": 40,\n  \"metadata\": {}\n}\n\nOption B — JSONL\n\n{chunk}\n{chunk}\n{chunk}\n\nOption C — plain text + metadata file\n\nOption D — pickle / binary\n\nWhy it matters\n\nThis determines:\n\ningestion speed\n\nbatch loading strategy\n\nembedding pipeline design\n\nQdrant payload schema\n\n2. Chunk Storage Layout\n\nThe directory exists but the expected structure is undefined.\n\nQuestion to previous chat:\n\nAre chunks stored as:\n\nchunks/\n  000001.json\n  000002.json\n\nor\n\nchunks/\n  source_file/\n     chunk_1.json\n     chunk_2.json\n\nor\n\nchunks.jsonl\n\nThis determines the reader implementation.\n\n3. Metadata Schema\n\nThe system defines a metadata directory:\n\ncorpora/coding/metadata\n\nBut the schema is unknown.\n\nAsk:\n\nWhat metadata fields must exist?\n\nExample payload candidates:\n\n{\n  \"source_file\": \"...\",\n  \"repo\": \"...\",\n  \"doc_type\": \"...\",\n  \"language\": \"...\",\n  \"section\": \"...\",\n  \"chunk_index\": 0\n}\n\nor something else.\n\nThis directly affects Qdrant payload indexing.\n\n4. Chunk ID Determinism\n\nYour architecture generally prefers deterministic IDs (based on how your other projects operate).\n\nConfirm:\n\nShould chunk IDs be derived from:\n\nblake3(text)\n\nor\n\nsource_file + offset\n\nor\n\nincremental IDs\n\nThis determines whether ingestion is reproducible.\n\n5. Vector Payload Design\n\nWe must know what payload accompanies vectors.\n\nExample:\n\n{\n \"text\": \"...\",\n \"source_file\": \"...\",\n \"path\": \"...\",\n \"chunk_id\": \"...\",\n \"doc_type\": \"coding_doc\"\n}\n\nAsk:\n\nWhat fields must be stored in Qdrant payload?\n\nWithout this, retrieval tools will break later.\n\n6. Embedding Batch Size\n\nEmbedding generation speed depends heavily on batching.\n\nAsk:\n\nShould embeddings run:\n\nsingle chunk\nbatch size 16\nbatch size 32\nbatch size 64\n\nThe XPS is CPU-only, so the optimal value matters.\n\n7. Embedding Storage Purpose\n\nThe directory:\n\ncorpora/*/embeddings\n\nexists.\n\nAsk the previous chat:\n\nAre embeddings stored locally before insertion into Qdrant, or only generated in-memory?\n\nPossible models:\n\nStrategy A\nchunks → embeddings → qdrant\nStrategy B\nchunks → embed → insert directly\n\nYour layout implies Strategy A, but confirmation is required.\n\n8. Coding Dataset Size\n\nAsk:\n\nHow large is the coding dataset?\n\nImportant metrics:\n\nnumber_of_files\nestimated_chunks\ntotal_text_size\n\nThis determines ingestion time.\n\n9. Retrieval Testing Strategy\n\nAsk:\n\nWhat retrieval evaluation method was planned?\n\nExamples:\n\nmanual query tests\ngolden queries\nautomatic relevance scoring\n\nThe handoff only states:\n\nvalidate retrieval queries\n\nbut gives no procedure.\n\n10. Chat Normalization Stage\n\nYour chat ingestion pipeline includes a step:\n\nraw → normalization → chunking\n\nBut the normalization rules were never defined.\n\nQuestions:\n\nWill system messages be removed?\n\nAre timestamps preserved?\n\nAre speaker roles encoded?\n\nAre code blocks preserved?\n\nThese choices strongly affect RAG quality.\n\nSummary\n\nThese are the minimal questions the previous chat must answer before implementation begins:\n\nChunk file format\n\nChunk directory structure\n\nMetadata schema\n\nDeterministic chunk ID strategy\n\nQdrant payload schema\n\nEmbedding batch size\n\nWhether embeddings are persisted before ingestion\n\nCoding dataset size\n\nRetrieval validation method\n\nChat normalization rules"
+          ]
+        },
+        "create_time": 1773447431.589,
+        "end_turn": null,
+        "id": "e0b83be4-2d61-4e06-ab0e-064c58dd1310",
+        "metadata": {
+          "can_save": false,
+          "developer_mode_connector_ids": [],
+          "message_source": null,
+          "parent_id": "905bbfa2-e4d3-476a-9494-1d8bbc7db077",
+          "request_id": "4298b0de-ff64-4d64-8d58-0d49bfe4c6d4",
+          "resolved_model_slug": "gpt-5-3",
+          "selected_github_repos": [],
+          "selected_sources": [],
+          "serialization_metadata": {
+            "custom_symbol_offsets": []
+          },
+          "turn_exchange_id": "c27d66c4-2e0d-474e-99ee-5fbb0df1076e"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "905bbfa2-e4d3-476a-9494-1d8bbc7db077"
+    },
+    "e40420b1-fcd4-4242-aa2a-111bb6d9ff51": {
+      "children": [
+        "fbe3ad4e-3fc7-4b4a-9c2d-c9fde342a438"
+      ],
+      "id": "e40420b1-fcd4-4242-aa2a-111bb6d9ff51",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content": "Thought for a few seconds",
+          "content_type": "reasoning_recap"
+        },
+        "create_time": 1775396618.408922,
+        "end_turn": false,
+        "id": "e40420b1-fcd4-4242-aa2a-111bb6d9ff51",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "finished_duration_sec": 3,
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "model_switcher_deny": [],
+          "parent_id": "b2e2fc5e-dd81-43fa-9041-310a39b5712d",
+          "reasoning_end_time": 1775396618.400458,
+          "reasoning_start_time": 1775396615.1979997,
+          "reasoning_status": "reasoning_ended",
+          "request_id": "f7386500-b098-4bf7-9c8d-b215bc61a342",
+          "search_result_groups": [],
+          "turn_exchange_id": "4a011336-7c15-40d3-bf7e-dc715a4daaf2"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "b2e2fc5e-dd81-43fa-9041-310a39b5712d"
+    },
+    "e4304592-82b2-4c89-8614-731c11ba681a": {
+      "children": [
+        "3232212a-7ef7-4451-9721-68400df9a8a7"
+      ],
+      "id": "e4304592-82b2-4c89-8614-731c11ba681a",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "user"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "Yes. These are the remaining questions I would want answered before implementation.\n\n1. Exact embedding format on disk\n\nYou chose .npy, which is good, but the mapping must be explicit.\n\nNeed to lock whether:\n\neach .npy file contains vectors only, with row order matching the JSONL line order\n\nor each embedding batch is stored separately\n\nYou want the first one:\n\nlua_api.jsonl  <->  lua_api.npy\n\nOne row per JSONL line, same order.\n\nThat should be explicitly locked.\n\n2. Qdrant point ID strategy\n\nYou defined chunk_id, but Qdrant point IDs also need a concrete rule.\n\nNeed to lock whether point ID is:\n\nan integer sequence\n\nUUID\n\nderived hash integer\n\nstored only in payload while Qdrant uses autogenerated integers\n\nBest choice here:\n\nuse deterministic integer IDs derived from the hash when possible, or\n\nuse sequential integer point IDs per file and store canonical chunk_id in payload\n\nOperationally, the second is simpler. The payload remains authoritative.\n\n3. Collection reset policy\n\nNeed to define whether ingestion into an existing collection is:\n\nfull drop and rebuild\n\nappend-only\n\nupsert by chunk_id\n\nFor reproducibility, the safest Phase-1 rule is:\n\ndrop and rebuild collection during test runs\n\nlater move to deterministic upsert\n\nThat should be explicit.\n\n4. Chat project labeling rule\n\nFor normalized chats, you proposed:\n\n{\"project\":\"CICS\"}\n\nNeed to lock how project is assigned:\n\nfilename-derived\n\ndirectory-derived\n\nfrontmatter/header-derived\n\nmanual manifest mapping\n\nThis matters a lot. I would not infer loosely. Best rule is a manifest mapping or top-level directory mapping.\n\n5. Conversation-unit generation method\n\nFor the dual-layer design, need to decide whether units are:\n\nrule-based only\n\nLLM-assisted then normalized\n\nmanual later\n\nFor your standards, Phase-1 should be:\n\ndeterministic rule-based segmentation first\n\nLLM summaries only as optional advisory artifacts later\n\nThat stays aligned with your broader governance philosophy.\n\n6. Manifest hash scope\n\nYou recommended manifests with hashes, but it should be locked whether the hash is over:\n\nfile bytes only\n\ncanonical parsed content\n\ncontent plus model/config metadata\n\nBest practice:\n\nchunk manifest hash over chunk file bytes\n\nembedding manifest hash over embedding file bytes plus model identifier\n\ningestion manifest hash over collection name, chunk manifest hash, embedding manifest hash\n\n7. Normalized chat schema versioning\n\nYou should introduce explicit schema names now, even if simple:\n\nNormalizedChatMessageSchema_1\nChatChunkSchema_1\nChatUnitSchema_1\nCodingChunkSchema_1\nEmbeddingManifestSchema_1\n\nWithout that, format drift will happen quickly.\n\n8. Retrieval API response shape\n\nBefore tools are written, define what retrieval returns.\n\nExample:\n\n{\n  \"query\": \"...\",\n  \"collection\": \"chat_chunks_v1\",\n  \"results\": [\n    {\n      \"chunk_id\": \"blake3:...\",\n      \"score\": 0.82,\n      \"text\": \"...\",\n      \"source_file\": \"...\",\n      \"project\": \"CICS\"\n    }\n  ]\n}\n\nThis avoids rewriting downstream tooling later."
+          ]
+        },
+        "create_time": 1773447647.266,
+        "end_turn": null,
+        "id": "e4304592-82b2-4c89-8614-731c11ba681a",
+        "metadata": {
+          "can_save": false,
+          "developer_mode_connector_ids": [],
+          "message_source": null,
+          "parent_id": "723c5ea2-2853-49f4-9929-736a898f141a",
+          "request_id": "82892cb3-d97d-450c-ba48-cf92483e9a5c",
+          "resolved_model_slug": "gpt-5-3",
+          "selected_github_repos": [],
+          "selected_sources": [],
+          "serialization_metadata": {
+            "custom_symbol_offsets": []
+          },
+          "turn_exchange_id": "60afcfd2-743e-456d-9e7a-416b525e6774"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "723c5ea2-2853-49f4-9929-736a898f141a"
+    },
+    "e80d6d68-8083-4bc9-9972-73399d5fc8a8": {
+      "children": [
+        "6755aaba-fd7b-470c-85ed-6b6eee4f5b34"
+      ],
+      "id": "e80d6d68-8083-4bc9-9972-73399d5fc8a8",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "system"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            ""
+          ]
+        },
+        "create_time": 1775396076.061968,
+        "end_turn": true,
+        "id": "e80d6d68-8083-4bc9-9972-73399d5fc8a8",
+        "metadata": {
+          "can_save": false,
+          "default_model_slug": "gpt-5-3",
+          "is_visually_hidden_from_conversation": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-3",
+          "parent_id": "26073d78-3661-48f5-a944-a5d84ea69863",
+          "rebase_developer_message": true,
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 0
+      },
+      "parent": "26073d78-3661-48f5-a944-a5d84ea69863"
+    },
+    "e9c96ab6-412e-4325-a4d2-37e10af52928": {
+      "children": [
+        "54d8ffa1-365a-424b-b579-d79280c5aad0"
+      ],
+      "id": "e9c96ab6-412e-4325-a4d2-37e10af52928",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "thoughts",
+          "source_analysis_msg_id": "ceec81ca-56cf-462a-ba8d-6fdf89959a04",
+          "thoughts": []
+        },
+        "create_time": 1775396077.947874,
+        "end_turn": false,
+        "id": "e9c96ab6-412e-4325-a4d2-37e10af52928",
+        "metadata": {
+          "can_save": false,
+          "citations": [],
+          "classifier_response": "default",
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "ceec81ca-56cf-462a-ba8d-6fdf89959a04",
+          "reasoning_start_time": 1775396076.0601623,
+          "reasoning_status": "is_reasoning",
+          "request_id": "04a2dc77-19ab-4eb9-bc2f-39a876d5aa15",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "skip_reasoning_title": "Skip",
+          "turn_exchange_id": "54a85c57-610d-43cd-b784-09e22318563a"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "6755aaba-fd7b-470c-85ed-6b6eee4f5b34"
+    },
+    "fbe3ad4e-3fc7-4b4a-9c2d-c9fde342a438": {
+      "children": [],
+      "id": "fbe3ad4e-3fc7-4b4a-9c2d-c9fde342a438",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": "final",
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "Below is the exact lock for those remaining implementation questions.\n\n# CICS — RAG Pipeline Implementation Locks\n\n## 1. Exact deterministic chunking algorithm\n\n### 1a. Coding corpus\n\nFor the **coding corpus**, “semantic chunking” means **deterministic rule-based structural segmentation**, not model-assisted segmentation.\n\n#### Locked rule\n\nChunk on structural boundaries in this precedence order:\n\n1. document heading / section boundary\n2. explicit code block boundary\n3. paragraph boundary\n4. sentence boundary as last resort\n\n#### Hard constraints\n\n- never split inside a fenced code block unless the code block itself exceeds the max chunk target\n- prefer preserving section integrity\n- include bounded overlap only if needed for continuity\n- identical input bytes must produce identical chunk boundaries\n\n#### Operational algorithm\n\nFor each source file:\n\n1. parse into structural blocks\n   - headings\n   - paragraphs\n   - lists\n   - fenced code blocks\n2. accumulate adjacent blocks until target chunk size is approached\n3. if adding next block exceeds max size, close current chunk\n4. if a single block exceeds max size:\n   - split by sub-boundary\n   - paragraph, then sentence, then fixed fallback window if absolutely necessary\n5. emit chunk with deterministic metadata\n\n#### Initial size targets\n\nFor Phase 1 coding corpus:\n\n```text\ntarget_chunk_chars = 1800\nmax_chunk_chars = 2600\noverlap_chars = 200\n```\n\nOverlap is only applied when a split occurs across a continuous prose region. Do not overlap independent headings/blocks unnecessarily.\n\n---\n\n### 1b. Chat corpus\n\nFor the **chat corpus**, “semantic chunking” also means **deterministic rule-based structural segmentation**, not LLM segmentation.\n\n#### Locked rule\n\nChunk on these boundaries in this precedence order:\n\n1. normalized message boundary\n2. conversation-unit boundary\n3. explicit hand-off block boundary\n4. implementation/debug/decision sequence boundary\n5. fallback size limit\n\n#### Chat chunk construction\n\nAuthoritative chat pipeline is dual-layer:\n\n1. normalize raw chat into message objects\n2. derive deterministic conversation units\n3. build chunks from those units without crossing major unit boundaries unless forced by size\n\n#### Initial size targets\n\nFor Phase 1 chat corpus:\n\n```text\ntarget_chunk_chars = 2200\nmax_chunk_chars = 3200\noverlap_chars = 250\n```\n\nReason: chat reasoning often needs slightly larger context windows than coding docs.\n\n---\n\n## 2. Does “semantic chunking” mean rule-based or model-assisted?\n\n**Locked decision**\n\nFor both coding and chats:\n\n```text\nsemantic chunking = deterministic rule-based structural segmentation\n```\n\nIt does **not** mean model-assisted chunking in the authoritative pipeline.\n\nAny later model-produced summaries or topic grouping are:\n\n```text\nadvisory only\nnon-authoritative\n```\n\nThis is fully aligned with your governance pattern.\n\n---\n\n## 3. Where does `nomic-embed-text` run?\n\n**Locked decision**\n\n`nomic-embed-text` runs on the **XPS RAG node** inside the local Python environment:\n\n```text\n/home/kimberly/cics/.venv\n```\n\nIt is part of the embedding pipeline on the XPS, not the Steam Deck.\n\n### Intended stack\n\n- source corpus on disk\n- chunk JSONL files on XPS working storage\n- embedding script runs on XPS CPU\n- vectors written to `.npy`\n- ingestion script pushes vectors into local Qdrant on XPS\n\n### Hardware role\n\n- Steam Deck = interaction/orchestration\n- XPS = embedding + vector DB node\n- future 3090 workstation = heavier future inference/analysis\n\n---\n\n## 4. Is the embedding model version pinned?\n\n**Locked decision**\n\nThe model must be pinned more specifically than the family name.\n\nPhase 1 requirement:\n\n```text\nstore exact model identifier used at embedding time\n```\n\nMinimum pinned fields in manifest:\n\n```text\nmodel_family = nomic-embed-text\nmodel_identifier = exact pulled/resolved model name or package reference\nrevision = exact revision/hash if available\n```\n\n### Governance rule\n\nModel family alone is insufficient for reproducibility.\n\nIf exact revision is not yet technically captured by the script, the pipeline is still allowed for bring-up, but that gap must be treated as a reproducibility weakness to close.\n\n### Practical phase rule\n\nFor Phase 1:\n- use exact resolved model string\n- record library/package versions\n- record vector dimension actually produced\n\n---\n\n## 5. Expected vector dimension\n\n**Locked decision**\n\nThe collection vector size must be read from the actual embedding output and then fixed in the ingestion manifest.\n\nFor initial planning, assume:\n\n```text\nvector_dim = 768\n```\n\nBut the authoritative value is:\n\n```text\nthe real output dimension produced by the pinned embedding model\n```\n\n### Rule\n\nDo not hardcode dimension purely from memory if the script can inspect it.\n\nAt collection creation time:\n- inspect first embedding row\n- derive vector dimension\n- create collection with that exact size\n\n---\n\n## 6. Qdrant distance metric\n\n**Locked decision**\n\nUse:\n\n```text\nCosine\n```\n\nThis is the default intended metric for both:\n\n- coding corpus\n- chat corpus\n\nUnless a later controlled evaluation proves otherwise, Cosine remains standard.\n\n---\n\n## 7. `.npy` dtype / storage assumptions\n\n**Locked decision**\n\nEmbeddings are stored as:\n\n```text\nNumPy .npy\ndtype = float32\nshape = (row_count, vector_dim)\n```\n\n### Rule\n\n- one `.npy` per `.jsonl`\n- contiguous 2D array\n- row order matches JSONL line order exactly\n- no object dtype\n- no float64 unless forced by upstream and explicitly converted\n\n### Why float32\n\n- standard for vector DB ingestion\n- smaller than float64\n- adequate precision\n- interoperable with Qdrant client expectations\n\n---\n\n## 8. Is ingestion ordering strictly deterministic, or parallelized?\n\n**Locked decision**\n\nPhase 1 ingestion ordering is **strictly deterministic**.\n\nNo parallel ingestion in the authoritative build path.\n\n### Ordering rule\n\nProcess chunk files in:\n\n```text\nlexicographic path order\n```\n\nProcess lines within each file in:\n\n```text\nnatural file line order\n```\n\nThis gives full reproducibility.\n\n### Practical implication\n\nParallelization is deferred until after the pipeline is stable and only if determinism guarantees are preserved.\n\n---\n\n## 9. Point IDs across multiple files\n\n**Locked decision**\n\nQdrant point IDs are **global sequential integers for the entire collection build**.\n\nThey do **not** reset per file.\n\n### Rule\n\nFor one collection build:\n\n```text\nfirst point id = 0\nnext = 1\n...\n```\n\nacross all files in deterministic file order.\n\nCanonical identity remains:\n\n```text\npayload.chunk_id\n```\n\nPoint IDs are operational only.\n\n---\n\n## 10. Mid-run ingestion failure policy\n\n**Locked decision for Phase 1**\n\nFailure policy is:\n\n```text\nfull rebuild only\n```\n\nNo resume/checkpoint for Qdrant ingestion in Phase 1.\n\n### Rule\n\nIf ingestion fails mid-run:\n\n1. treat collection build as invalid\n2. delete partial collection\n3. restart full drop-and-rebuild ingestion\n\n### Why\n\n- simpler\n- deterministic\n- avoids partial-state ambiguity\n\nResume/checkpoint can be added later, but not in initial bring-up.\n\n---\n\n## 11. Default retrieval `top_k`\n\n**Locked decision**\n\nDefault retrieval:\n\n```text\ntop_k = 5\n```\n\n### Allowed operational values\n\n- default interactive retrieval: 5\n- diagnostic retrieval: 10\n- evaluation runs: configurable\n\nBut the canonical default is:\n\n```text\n5\n```\n\n---\n\n## 12. Is the coding corpus authoritative or only validation?\n\n**Locked decision**\n\nIn this transcript, the **coding corpus is a validation corpus for node bring-up**, not the primary authoritative focus of the CICS project.\n\n### Important nuance\n\nIt is still a real corpus and should be handled deterministically, but in the context of this phase its role is:\n\n```text\nbring-up validation corpus\n```\n\nUsed to verify:\n\n- chunking pipeline\n- embedding pipeline\n- Qdrant ingestion\n- retrieval behavior\n\nThe **primary authoritative target corpus for CICS** remains:\n\n```text\nthe chat corpus\n```\n\nBut chat processing is deferred until chat acquisition freeze completes.\n\n---\n\n# Final locked summary\n\n## Chunking\n```text\ndeterministic rule-based structural segmentation\nnot model-assisted\n```\n\n## Embedding runtime\n```text\nruns locally on XPS in /home/kimberly/cics/.venv\n```\n\n## Model pinning\n```text\nexact model identifier/revision should be recorded\nfamily name alone is insufficient\n```\n\n## Vector schema\n```text\ndimension = derived from actual embeddings\nplanning assumption = 768\ndistance = Cosine\ndtype = float32\n```\n\n## Ingestion\n```text\ndeterministic lexicographic file order\nglobal sequential point IDs per collection build\nPhase 1 failure policy = full rebuild\n```\n\n## Retrieval\n```text\ndefault top_k = 5\n```\n\n## Coding corpus role\n```text\nvalidation corpus for node bring-up\nnot the primary CICS target corpus\n```\n\nThese decisions are sufficient to stop re-opening the RAG node design in the next continuation chat."
+          ]
+        },
+        "create_time": 1775396615.247224,
+        "end_turn": true,
+        "id": "fbe3ad4e-3fc7-4b4a-9c2d-c9fde342a438",
+        "metadata": {
+          "can_save": false,
+          "citations": [],
+          "content_references": [],
+          "cta_by_suggested_connector_id": {
+            "connector_openai_deep_research": "Deep research into algorithm and implementation"
+          },
+          "default_model_slug": "gpt-5-3",
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "e40420b1-fcd4-4242-aa2a-111bb6d9ff51",
+          "request_id": "f7386500-b098-4bf7-9c8d-b215bc61a342",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "suggested_connector_ids": [
+            "connector_openai_deep_research"
+          ],
+          "turn_exchange_id": "4a011336-7c15-40d3-bf7e-dc715a4daaf2"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "e40420b1-fcd4-4242-aa2a-111bb6d9ff51"
+    },
+    "fd4cd8b1-ea33-4005-9322-713af0eceef0": {
+      "children": [
+        "923a541f-1c0e-4489-b7d4-511499a4e327"
+      ],
+      "id": "fd4cd8b1-ea33-4005-9322-713af0eceef0",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "assistant"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "thoughts",
+          "source_analysis_msg_id": "e2e6b5bf-90c2-4827-a5af-7d8ceaf399b6",
+          "thoughts": []
+        },
+        "create_time": 1773447650.516227,
+        "end_turn": false,
+        "id": "fd4cd8b1-ea33-4005-9322-713af0eceef0",
+        "metadata": {
+          "can_save": false,
+          "citations": [],
+          "classifier_response": "default",
+          "content_references": [],
+          "default_model_slug": "gpt-5-3",
+          "disable_turn_actions": true,
+          "gizmo_id": "g-p-69b0b52d77ac8191b6d6a653a3953d86",
+          "hide_inline_actions": true,
+          "message_type": "next",
+          "model_slug": "gpt-5-4-thinking",
+          "model_switcher_deny": [],
+          "parent_id": "e2e6b5bf-90c2-4827-a5af-7d8ceaf399b6",
+          "reasoning_start_time": 1773447649.4990277,
+          "reasoning_status": "is_reasoning",
+          "request_id": "82892cb3-d97d-450c-ba48-cf92483e9a5c",
+          "resolved_model_slug": "gpt-5-4-auto-thinking",
+          "search_result_groups": [],
+          "skip_reasoning_title": "Skip",
+          "turn_exchange_id": "60afcfd2-743e-456d-9e7a-416b525e6774"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "3232212a-7ef7-4451-9721-68400df9a8a7"
+    },
+    "fe05f1c3-b9c3-427a-b8e6-e83950cf0d09": {
+      "children": [
+        "8e8894f2-c6bd-4ee4-a820-a4a9b33bd8f3"
+      ],
+      "id": "fe05f1c3-b9c3-427a-b8e6-e83950cf0d09",
+      "message": {
+        "author": {
+          "metadata": {},
+          "name": null,
+          "role": "user"
+        },
+        "channel": null,
+        "content": {
+          "content_type": "text",
+          "parts": [
+            "What is the exact deterministic chunking algorithm for the coding corpus and later chat corpus?\nIn this transcript, “semantic chunking” is referenced repeatedly—does that mean purely rule-based segmentation or model-assisted segmentation?\nWhere does nomic-embed-text actually run in the intended implementation stack?\nIs the embedding model version pinned, or only the model family name?\nWhat is the expected vector dimension for the collection schema?\nWhat Qdrant distance metric is intended?\nFor .npy embeddings, what dtype/storage assumptions are intended?\nIs ingestion ordering strictly deterministic across files, or can ingestion be parallelized?\nWhen multiple chunk files are ingested, are Qdrant point IDs global sequential integers or reset per file?\nIf ingestion fails mid-run, is the policy full rebuild only, or resume/checkpoint?\nWhat is the default retrieval top_k?\nIs the coding corpus in this transcript treated as a permanent authoritative corpus or a validation corpus for node bring-up?"
+          ]
+        },
+        "create_time": 1775396613.613,
+        "end_turn": null,
+        "id": "fe05f1c3-b9c3-427a-b8e6-e83950cf0d09",
+        "metadata": {
+          "can_save": false,
+          "developer_mode_connector_ids": [],
+          "message_source": null,
+          "parent_id": "8570b1c4-cb7d-45cc-9a0a-9ee354700316",
+          "request_id": "f7386500-b098-4bf7-9c8d-b215bc61a342",
+          "resolved_model_slug": "gpt-5-3",
+          "selected_github_repos": [],
+          "selected_sources": [],
+          "serialization_metadata": {
+            "custom_symbol_offsets": []
+          },
+          "turn_exchange_id": "4a011336-7c15-40d3-bf7e-dc715a4daaf2"
+        },
+        "recipient": "all",
+        "status": "finished_successfully",
+        "update_time": null,
+        "weight": 1
+      },
+      "parent": "8570b1c4-cb7d-45cc-9a0a-9ee354700316"
+    },
+    "paginated-root:69b2470e-8fdc-832e-800f-c0f8c7130db8": {
+      "children": [
+        "c349dd5c-51a9-4772-b1f3-afea7888f5a3"
+      ],
+      "id": "paginated-root:69b2470e-8fdc-832e-800f-c0f8c7130db8",
+      "parent": ""
+    }
+  },
+  "memory_scope": "global_enabled",
+  "moderation_results": [],
+  "owner": {
+    "avatar_url": "https://s.gravatar.com/avatar/1192f1ca9ef49f62a662cf3148660cba?s=480&r=pg&d=https%3A%2F%2Fcdn.auth0.com%2Favatars%2Fbl.png",
+    "name": "Blaine Smith",
+    "user_email": "blainesmith.33@gmail.com",
+    "user_id": "user-5Ah3Jq5MjieLw3Vp9tHTJRDj"
+  },
+  "pinned_time": null,
+  "plugin_ids": null,
+  "safe_urls": [],
+  "sugar_item_id": null,
+  "sugar_item_visible": false,
+  "title": "CICS Index Continuation",
+  "update_time": 1775396732.622608,
+  "voice": null
+}
